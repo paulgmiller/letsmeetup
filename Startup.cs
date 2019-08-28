@@ -15,7 +15,11 @@ namespace letsmeetup
         {
             //builder.Services.AddHttpClient();
             builder.Services.AddSingleton((s) => {
-                return new CosmosClient(Environment.GetEnvironmentVariable("COSMOSDB_CONNECTIONSTRING"));
+                return new CosmosClient(Environment.GetEnvironmentVariable("COSMOSDB_CONNECTIONSTRING"),
+                            new CosmosClientOptions()
+                            {
+                                ApplicationRegion = Regions.WestUS2 //todo pull from env var
+                            });
             });
             //builder.Services.AddSingleton<ILoggerProvider, MyLoggerProvider>();
         }
