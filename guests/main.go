@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"net/http/httputil"
+	"os"
 	"time"
 
 	"github.com/samber/lo"
@@ -16,7 +17,6 @@ import (
 
 var (
 	endpoint     = "https://letsmeetup.documents.azure.com:443/"
-	key          = "bOiqC7CLKK8iREpFOikoK2H1RhO6vCaa9R6g428IfHYN9ENdqBcTSGmnNZM5rGuLeFmEJ647aFSgACDbnoENDw=="
 	databaseName = "meetupdb"
 )
 
@@ -29,6 +29,11 @@ type Guest struct {
 }
 
 func main() {
+
+	key, ok := os.LookupEnv("AZURE_COSMOS_DB_KEY")
+	if !ok {
+		log.Fatal("AZURE_COSMOS_DB_KEY not set")
+	}
 
 	cred, err := azcosmos.NewKeyCredential(key)
 	if err != nil {
@@ -126,7 +131,6 @@ func main() {
 			return
 		}
 		log.Printf("returning :%d guests", len(guests))
-		w.WriteHeader(http.StatusOK)
 	})
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		http.ServeFile(w, r, "index.html")
