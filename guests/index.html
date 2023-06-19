@@ -55,19 +55,21 @@ layout: nil
               guestid = uuidv4()
               Cookies.set('GuestId', guestid) //don't think this is working
             }
-            var me =  JSON.stringify({lat: position.coords.latitude, long: position.coords.longitude, GuestId: guestid, MeetupID: meetup});
+            var me =  JSON.stringify({Lat: position.coords.latitude, Long: position.coords.longitude, GuestId: guestid, MeetupID: meetup});
             $.post('/meetups/'+meetup, me, 
                 function(guests, status) {
                 if (status !== 'success') {
-                  alert(status)
+                  alert("guests api: "+ status)
                   return; 
                 }
+                console.info(JSON.stringify(guests))
                 var guest;
                 var bounds = new google.maps.LatLngBounds();
                 map = new google.maps.Map(document.getElementById('map'), {});
                 for (guest of guests)
                 {
-                  var guestpos = { lat: parseFloat(guest.lat),  lng: parseFloat(guest.long)}
+                  console.info(JSON.stringify(guest))
+                  var guestpos = { lat: parseFloat(guest.Lat),  lng: parseFloat(guest.Long)}
                   var guestmarker = new google.maps.Marker({position: guestpos, map: map, title: "guest"});
                   bounds.extend(guestpos)
                 }
@@ -82,6 +84,7 @@ layout: nil
                 query = 'food'
               }
               search_request = {location: middle, rankBy: google.maps.places.RankBy.DISTANCE, keyword: query}
+              console.info(JSON.stringify(search_request))
               service.nearbySearch(
                 //search in bounds? add a query from query parametr
                 search_request,
@@ -102,7 +105,8 @@ layout: nil
                     return;
                   }
                   else if (status !== 'OK') {
-                    alert(status)
+                    alert('nearyby search ' + status)
+                    console.log(results)
                     return; 
                   }
                   for (var i = 0; i < results.length && i < 3; i++) {

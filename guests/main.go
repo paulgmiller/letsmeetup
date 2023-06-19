@@ -124,6 +124,7 @@ func main() {
 			})
 			guests = append(guests, pageOfGuests...)
 		}
+		w.Header().Set("Content-Type", "application/json")
 		err = json.NewEncoder(w).Encode(guests)
 		if err != nil {
 			log.Printf("Failed to query items: %s\n", err)
@@ -133,6 +134,7 @@ func main() {
 		log.Printf("returning :%d guests", len(guests))
 	})
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		log.Printf("%s %s %s\n", r.RemoteAddr, r.Method, r.URL)
 		http.ServeFile(w, r, "index.html")
 	})
 	fmt.Println("Listening on port 8080")
