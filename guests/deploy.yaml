@@ -31,7 +31,7 @@ spec:
             secretKeyRef:
               key: AZURE_COSMOS_DB_KEY
               name: letsmeetup
-        image: paulgmiller/letsmeetup
+        image: paulgmiller/letsmeetup:c2ade03
         imagePullPolicy: Always
         name: letsmeetup
         resources:
