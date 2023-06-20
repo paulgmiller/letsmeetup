@@ -143,7 +143,9 @@ layout: nil
                   });
                 });
              })
-        })
+        }, function(positionError) {
+          alert("position error: " + positionError.message)
+        });
       }
     </script>
     <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDOFv6dJjvOaRnP8d3Vf9t9802bSEYGs7U&callback=initMap&libraries=places"
