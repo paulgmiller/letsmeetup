@@ -48,6 +48,7 @@ layout: nil
           meetup  = btoa(Math.floor(Math.random() * Math.floor(1000000)))
           window.location.search += ('m=' + meetup)
         }
+        console.info("getting current postition")
         navigator.geolocation.getCurrentPosition(function(position) {
             var guestid = Cookies.get('GuestId'); 
             if(guestid === undefined)
@@ -56,6 +57,7 @@ layout: nil
               Cookies.set('GuestId', guestid) //don't think this is working
             }
             var me =  JSON.stringify({Lat: position.coords.latitude, Long: position.coords.longitude, GuestId: guestid, MeetupID: meetup});
+            console.info("fetching /meetups/"+meetup)
             promise = fetch("/meetups/"+meetup, {method: 'POST', body: me, headers: {'Content-Type': 'application/json'}})
             promise.then(function(response) {
                
@@ -63,6 +65,7 @@ layout: nil
                   alert("guests api: "+ response.statuText)
                   return; 
                 }
+                console.info("processing json")
                 response.json().then(function(guests) { 
                   console.info(JSON.stringify(guests))
                   var guest;
