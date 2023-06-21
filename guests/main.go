@@ -3,10 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
-	"net/http/httputil"
 	"os"
 	"time"
 
@@ -62,14 +60,6 @@ func main() {
 			return
 		}
 		var g Guest
-
-		reqDump, err := httputil.DumpRequest(r, true)
-		if err != nil {
-			log.Printf("failed to dump req: %s", err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		log.Printf("REQUEST:\n%s", string(reqDump))
 
 		err = json.NewDecoder(r.Body).Decode(&g)
 		if err != nil {
@@ -133,11 +123,15 @@ func main() {
 		}
 		log.Printf("returning :%d guests", len(guests))
 	})
+
+	fs := http.FileServer(http.Dir("./scripts"))
+	http.Handle("/scripts/", http.StripPrefix("/scripts", fs))
+
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		log.Printf("%s %s %s\n", r.RemoteAddr, r.Method, r.URL)
-		w.Header().Set("Access-Control-Allow-Origin", "*")
 		http.ServeFile(w, r, "index.html")
 	})
-	fmt.Println("Listening on port 8080")
+
+	log.Println("Listening on port 8080")
 	http.ListenAndServe(":8080", nil)
 }
