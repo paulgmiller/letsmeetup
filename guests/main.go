@@ -49,89 +49,106 @@ func main() {
 		log.Fatalf("failed to create a container client: %s", err)
 	}
 
-	http.HandleFunc("/meetups/", func(w http.ResponseWriter, r *http.Request) {
-		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-		defer cancel()
+	meetupHandler := &MeetupHandler{containerClient}
 
-		log.Printf("%s %s %s\n", r.RemoteAddr, r.Method, r.URL)
-		if r.Method != http.MethodPost {
-			log.Printf("Method %s not allowed\n", r.Method)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		var g Guest
+	mux := http.NewServeMux()
 
-		err = json.NewDecoder(r.Body).Decode(&g)
-		if err != nil {
-			log.Printf("Failed to decode body item: %s\n", err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
-		g.Id = g.MeetupId + "/" + g.GuestId //guest id is used as the id for the document (rowkey)
-		bytes, err := json.Marshal(g)
-		if err != nil {
-			log.Printf("Failed to encode guest: %s\n", err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
+	mux.Handle("/meetups/", meetupHandler)
 
-		pk := azcosmos.NewPartitionKeyString(g.MeetupId)
+	fs := http.FileServer(http.Dir("./scripts"))
+	mux.Handle("/scripts/", http.StripPrefix("/scripts", fs))
 
-		resp, err := containerClient.UpsertItem(ctx, pk, bytes, &azcosmos.ItemOptions{
-			ConsistencyLevel: azcosmos.ConsistencyLevelSession.ToPtr(),
-		})
-		if err != nil {
-			log.Printf("Failed to create item: %s\n", err)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "index.html")
+	})
 
-		log.Printf("Status %d. Item %v created. ActivityId %s. Consuming %v Request Units.\n", resp.RawResponse.StatusCode, pk, resp.ActivityID, resp.RequestCharge)
-		if resp.RawResponse.StatusCode != http.StatusAccepted && resp.RawResponse.StatusCode != http.StatusCreated && resp.RawResponse.StatusCode != http.StatusOK {
-			log.Printf("unaccapetable status code %d", resp.RawResponse.StatusCode)
-			w.WriteHeader(http.StatusBadRequest)
-			return
-		}
+	log.Println("Listening on port 8080")
+	http.ListenAndServe(":8080", Logging(mux))
+}
 
-		pager := containerClient.NewQueryItemsPager("SELECT * FROM c", pk, &azcosmos.QueryOptions{})
-		guests := make([]Guest, 0)
-		for pager.More() {
-			resp, err := pager.NextPage(ctx)
-			if err != nil {
-				log.Printf("Failed to query items: %s\n", err)
-				w.WriteHeader(http.StatusInternalServerError)
-				return
-			}
-			pageOfGuests := lo.FilterMap(resp.Items, func(bytes []byte, _ int) (Guest, bool) {
-				var g Guest
-				if err := json.Unmarshal(bytes, &g); err != nil {
-					log.Printf("could not unmarshal item: %s, %s\n", err)
-					return g, false
-				}
-				g.Id = "" //blank this out since we're not sure if we might change it
-				return g, true
+func Logging(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		start := time.Now()
+		next.ServeHTTP(w, req)
+		log.Printf("%s %s %s", req.Method, req.RequestURI, time.Since(start))
+	})
+}
 
-			})
-			guests = append(guests, pageOfGuests...)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		err = json.NewEncoder(w).Encode(guests)
+type MeetupHandler struct {
+	client *azcosmos.ContainerClient
+}
+
+func (h *MeetupHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+
+	log.Printf("%s %s %s\n", r.RemoteAddr, r.Method, r.URL)
+	if r.Method != http.MethodPost {
+		log.Printf("Method %s not allowed\n", r.Method)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	var g Guest
+
+	err := json.NewDecoder(r.Body).Decode(&g)
+	if err != nil {
+		log.Printf("Failed to decode body item: %s\n", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+	g.Id = g.MeetupId + "/" + g.GuestId //guest id is used as the id for the document (rowkey)
+	bytes, err := json.Marshal(g)
+	if err != nil {
+		log.Printf("Failed to encode guest: %s\n", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	pk := azcosmos.NewPartitionKeyString(g.MeetupId)
+
+	resp, err := h.client.UpsertItem(ctx, pk, bytes, &azcosmos.ItemOptions{
+		ConsistencyLevel: azcosmos.ConsistencyLevelSession.ToPtr(),
+	})
+	if err != nil {
+		log.Printf("Failed to create item: %s\n", err)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	log.Printf("Status %d. Item %v created. ActivityId %s. Consuming %v Request Units.\n", resp.RawResponse.StatusCode, pk, resp.ActivityID, resp.RequestCharge)
+	if resp.RawResponse.StatusCode != http.StatusAccepted && resp.RawResponse.StatusCode != http.StatusCreated && resp.RawResponse.StatusCode != http.StatusOK {
+		log.Printf("unaccapetable status code %d", resp.RawResponse.StatusCode)
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	pager := h.client.NewQueryItemsPager("SELECT * FROM c", pk, &azcosmos.QueryOptions{})
+	guests := make([]Guest, 0)
+	for pager.More() {
+		resp, err := pager.NextPage(ctx)
 		if err != nil {
 			log.Printf("Failed to query items: %s\n", err)
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		log.Printf("returning :%d guests", len(guests))
-	})
+		pageOfGuests := lo.FilterMap(resp.Items, func(bytes []byte, _ int) (Guest, bool) {
+			var g Guest
+			if err := json.Unmarshal(bytes, &g); err != nil {
+				log.Printf("could not unmarshal item: %s, %s\n", err)
+				return g, false
+			}
+			g.Id = "" //blank this out since we're not sure if we might change it
+			return g, true
 
-	fs := http.FileServer(http.Dir("./scripts"))
-	http.Handle("/scripts/", http.StripPrefix("/scripts", fs))
-
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		log.Printf("%s %s %s\n", r.RemoteAddr, r.Method, r.URL)
-		http.ServeFile(w, r, "index.html")
-	})
-
-	log.Println("Listening on port 8080")
-	http.ListenAndServe(":8080", nil)
+		})
+		guests = append(guests, pageOfGuests...)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	err = json.NewEncoder(w).Encode(guests)
+	if err != nil {
+		log.Printf("Failed to query items: %s\n", err)
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+	log.Printf("returning :%d guests", len(guests))
 }

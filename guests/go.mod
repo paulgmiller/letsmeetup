@@ -4,7 +4,6 @@ go 1.19
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/data/azcosmos v0.3.5
-	github.com/gofrs/uuid v4.4.0+incompatible
 	github.com/samber/lo v1.38.1
 )
 
