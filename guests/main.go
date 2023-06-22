@@ -55,15 +55,13 @@ func main() {
 
 	mux.Handle("/meetups/", meetupHandler)
 
-	fs := http.FileServer(http.Dir("./scripts"))
-	mux.Handle("/scripts/", http.StripPrefix("/scripts", fs))
-
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, "index.html")
-	})
+	fs := http.FileServer(http.Dir("./static"))
+	mux.Handle("/", fs)
 
 	log.Println("Listening on port 8080")
-	http.ListenAndServe(":8080", Logging(mux))
+	if err := http.ListenAndServe(":8080", Logging(mux)); err != nil {
+		log.Printf(err.Error())
+	}
 }
 
 func Logging(next http.Handler) http.Handler {
@@ -134,7 +132,7 @@ func (h *MeetupHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		pageOfGuests := lo.FilterMap(resp.Items, func(bytes []byte, _ int) (Guest, bool) {
 			var g Guest
 			if err := json.Unmarshal(bytes, &g); err != nil {
-				log.Printf("could not unmarshal item: %s, %s\n", err)
+				log.Printf("could not unmarshal item: %s, %s\n", bytes, err)
 				return g, false
 			}
 			g.Id = "" //blank this out since we're not sure if we might change it
