@@ -7,5 +7,5 @@ ADD . /build/
 RUN go build -o /guests ./
 FROM gcr.io/distroless/base
 COPY --from=build-env /guests /
-ADD index.html /index.html
+ADD static/ /static/
 ENTRYPOINT ["/guests"]
