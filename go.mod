@@ -1,4 +1,4 @@
-module github.com/paulgmiller/letsmeetup/guests
+module github.com/paulgmiller/letsmeetup
 
 go 1.19
 

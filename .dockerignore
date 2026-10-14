@@ -1,1 +1,8 @@
-local.settings.json
+.git
+.agents
+.codex
+.aws
+.env
+.env.*
+letsmeetup
+coverage.out
