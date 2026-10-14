@@ -1,4 +1,4 @@
-FROM golang as build-env
+FROM golang:1.27.2 AS build-env
 RUN mkdir /build 
 WORKDIR /build 
 ADD go.* /build/

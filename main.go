@@ -60,7 +60,7 @@ func main() {
 
 	log.Println("Listening on port 8080")
 	if err := http.ListenAndServe(":8080", Logging(mux)); err != nil {
-		log.Printf(err.Error())
+		log.Print(err)
 	}
 }
 

@@ -1,17 +1,15 @@
 module github.com/paulgmiller/letsmeetup
 
-go 1.19
+go 1.27.2
 
 require (
-	github.com/Azure/azure-sdk-for-go/sdk/data/azcosmos v0.3.5
-	github.com/samber/lo v1.38.1
+	github.com/Azure/azure-sdk-for-go/sdk/data/azcosmos v1.5.0
+	github.com/samber/lo v1.53.0
 )
 
 require (
-	github.com/Azure/azure-sdk-for-go v68.0.0+incompatible // indirect
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.4.0 // indirect
-	github.com/Azure/azure-sdk-for-go/sdk/internal v1.2.0 // indirect
-	golang.org/x/exp v0.0.0-20220303212507-bbda1eaf7a17 // indirect
-	golang.org/x/net v0.17.0 // indirect
-	golang.org/x/text v0.13.0 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.3 // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/internal v1.13.0 // indirect
+	golang.org/x/net v0.61.0 // indirect
+	golang.org/x/text v0.43.0 // indirect
 )
