@@ -26,10 +26,10 @@ spec:
     spec:
       containers:
       - env:
-        - name: AZURE_COSMOS_DB_KEY
+        - name: DATABASE_URL
           valueFrom:
             secretKeyRef:
-              key: AZURE_COSMOS_DB_KEY
+              key: DATABASE_URL
               name: letsmeetup
         image: paulgmiller/letsmeetup:37a7df5
         imagePullPolicy: Always

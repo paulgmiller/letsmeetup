@@ -2,14 +2,13 @@ module github.com/paulgmiller/letsmeetup
 
 go 1.27.2
 
-require (
-	github.com/Azure/azure-sdk-for-go/sdk/data/azcosmos v1.5.0
-	github.com/samber/lo v1.53.0
-)
+require github.com/jackc/pgx/v5 v5.11.0
 
 require (
-	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.23.3 // indirect
-	github.com/Azure/azure-sdk-for-go/sdk/internal v1.13.0 // indirect
-	golang.org/x/net v0.61.0 // indirect
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+	github.com/jackc/puddle/v2 v2.2.2 // indirect
+	github.com/stretchr/testify v1.12.1 // indirect
+	golang.org/x/sync v0.24.0 // indirect
 	golang.org/x/text v0.43.0 // indirect
 )
