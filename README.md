@@ -43,6 +43,6 @@ Use a disposable database for integration tests. They verify startup table creat
 docker run --rm -p 8080:8080 --env DATABASE_URL letsmeetup:local
 ```
 
-`deploy.yaml` reads `DATABASE_URL` from the `letsmeetup` Kubernetes Secret in the `letsmeetup` namespace. Populate that secret externally and update the deployment image to the SQL-backed build before deploying. The checked-in image tag is historical.
+`deploy.yaml` reads `DATABASE_URL` from the `connection-string` key of the `roachmotel-credentials` Kubernetes Secret in the `letsmeetup` namespace. The connection string uses `sslmode=require` for TLS without certificate verification; the deployment needs no certificate mounts. The deployment image is pinned to the SQL migration commit. Update its tag when publishing a new application build.
 
 `bash build.sh` builds and **pushes** `paulgmiller/letsmeetup:<short-commit>` from the repository root. It does not deploy the image.

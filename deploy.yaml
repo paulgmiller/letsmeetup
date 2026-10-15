@@ -29,11 +29,18 @@ spec:
         - name: DATABASE_URL
           valueFrom:
             secretKeyRef:
-              key: DATABASE_URL
-              name: letsmeetup
-        image: paulgmiller/letsmeetup:37a7df5
+              key: connection-string
+              name: roachmotel-credentials
+        image: paulgmiller/letsmeetup:e0a152c
         imagePullPolicy: Always
         name: letsmeetup
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8080
+          initialDelaySeconds: 2
+          periodSeconds: 5
+          timeoutSeconds: 2
         resources:
           limits:
             cpu: 100m
