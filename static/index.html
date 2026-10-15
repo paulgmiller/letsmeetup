@@ -8,7 +8,8 @@
       /* Always set the map height explicitly to define the size of the div
        * element that contains the map. */
       #map {
-        height: 100%;
+        flex: 1;
+        min-height: 0;
       }
       /* Optional: Makes the sample page fill the window. */
       html, body {
@@ -16,10 +17,45 @@
         margin: 0;
         padding: 0;
       }
+      body {
+        display: flex;
+        flex-direction: column;
+        font-family: sans-serif;
+      }
+      footer {
+        padding: 12px 16px;
+        padding-bottom: max(12px, env(safe-area-inset-bottom));
+        background: white;
+        box-shadow: 0 -2px 8px #0002;
+      }
+      #search-form, .share-controls {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      #search-form { margin-bottom: 12px; }
+      input, button { font: inherit; padding: 10px 12px; }
+      input { flex: 1; min-width: 120px; }
+      button { cursor: pointer; }
+      #share-status { font-size: 0.875rem; }
     </style>
   </head>
   <body>
     <div id="map"></div>
+    <footer>
+      <form id="search-form">
+        <label for="search-query">Search nearby</label>
+        <input id="search-query" name="query" type="search" placeholder="food" maxlength="200" required>
+        <button id="search-button" type="submit" disabled>Search</button>
+        <span id="search-status" role="status"></span>
+      </form>
+      <div class="share-controls">
+        <span>send this to your friend</span>
+        <button id="share-button" type="button">Share</button>
+        <span id="share-status" role="status"></span>
+      </div>
+    </footer>
     <script src="https://cdn.jsdelivr.net/npm/js-cookie@2/src/js.cookie.min.js"></script>
     <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script><!--remove?-->
     <script src="/main.js"></script>

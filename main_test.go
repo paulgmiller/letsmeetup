@@ -19,6 +19,71 @@ type stubGuestStore struct {
 	err    error
 }
 
+type stubSearchStore struct {
+	meetup, query string
+	err           error
+}
+
+func (s *stubSearchStore) GetSearch(ctx context.Context, meetup string) (string, error) {
+	s.meetup = meetup
+	return s.query, s.err
+}
+
+func (s *stubSearchStore) SaveSearch(ctx context.Context, meetup, query string) error {
+	s.meetup, s.query = meetup, query
+	return s.err
+}
+
+func TestMeetupSearchHandler(t *testing.T) {
+	for _, tc := range []struct {
+		name, method, body, path, want string
+		status                         int
+		err                            error
+	}{
+		{name: "load", method: "GET", want: "coffee", status: 200},
+		{name: "save", method: "PUT", body: `{"query":"  tea & cake  "}`, want: "tea & cake", status: 200},
+		{name: "empty", method: "PUT", body: `{"query":"  "}`, status: 400},
+		{name: "missing query", method: "PUT", body: `{}`, status: 400},
+		{name: "invalid JSON", method: "PUT", body: `{`, status: 400},
+		{name: "too long", method: "PUT", body: `{"query":"` + strings.Repeat("a", 201) + `"}`, status: 400},
+		{name: "missing meetup", method: "GET", path: "/meetup-search/", status: 400},
+		{name: "wrong method", method: "POST", status: 405},
+		{name: "load failure", method: "GET", err: errors.New("private database details"), status: 500},
+		{name: "save failure", method: "PUT", body: `{"query":"tea"}`, err: errors.New("private database details"), status: 500},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := &stubSearchStore{query: "coffee", err: tc.err}
+			path := tc.path
+			if path == "" {
+				path = "/meetup-search/friends"
+			}
+			w := httptest.NewRecorder()
+			(&MeetupSearchHandler{store: store}).ServeHTTP(w, httptest.NewRequest(tc.method, path, strings.NewReader(tc.body)))
+			if w.Code != tc.status {
+				t.Fatalf("status=%d body=%s", w.Code, w.Body.String())
+			}
+			if w.Header().Get("Cache-Control") != "no-store" {
+				t.Fatal("shared search must not be cached")
+			}
+			if tc.status == 200 {
+				var search meetupSearch
+				if err := json.Unmarshal(w.Body.Bytes(), &search); err != nil {
+					t.Fatal(err)
+				}
+				if search.Query != tc.want || store.meetup != "friends" {
+					t.Fatalf("search=%+v meetup=%s", search, store.meetup)
+				}
+			}
+			if tc.status == 400 && store.meetup != "" {
+				t.Fatal("invalid input reached store")
+			}
+			if strings.Contains(w.Body.String(), "private database details") {
+				t.Fatal("database details leaked")
+			}
+		})
+	}
+}
+
 func (s *stubGuestStore) UpsertAndList(ctx context.Context, g Guest) ([]Guest, error) {
 	s.called = true
 	s.guest = g

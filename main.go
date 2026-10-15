@@ -6,7 +6,9 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 	"time"
+	"unicode/utf8"
 )
 
 type Guest struct {
@@ -27,10 +29,67 @@ func main() {
 	defer store.Close()
 	mux := http.NewServeMux()
 	mux.Handle("/meetups/", &MeetupHandler{store: store})
+	mux.Handle("/meetup-search/", &MeetupSearchHandler{store: store})
 	mux.Handle("/", http.FileServer(http.Dir("./static")))
 	log.Println("Listening on port 8080")
 	if err := http.ListenAndServe(":8080", Logging(mux)); err != nil {
 		log.Print(err)
+	}
+}
+
+type meetupSearchStore interface {
+	GetSearch(context.Context, string) (string, error)
+	SaveSearch(context.Context, string, string) error
+}
+
+type MeetupSearchHandler struct {
+	store meetupSearchStore
+}
+
+type meetupSearch struct {
+	Query string `json:"query"`
+}
+
+func (h *MeetupSearchHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	meetup := strings.TrimPrefix(r.URL.Path, "/meetup-search/")
+	if strings.TrimSpace(meetup) == "" {
+		http.Error(w, "Meetup ID required", http.StatusBadRequest)
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	var search meetupSearch
+	var err error
+	switch r.Method {
+	case http.MethodGet:
+		search.Query, err = h.store.GetSearch(ctx, meetup)
+	case http.MethodPut:
+		r.Body = http.MaxBytesReader(w, r.Body, 4096)
+		decoder := json.NewDecoder(r.Body)
+		if decoder.Decode(&search) != nil {
+			http.Error(w, "Invalid search", http.StatusBadRequest)
+			return
+		}
+		search.Query = strings.TrimSpace(search.Query)
+		if search.Query == "" || utf8.RuneCountInString(search.Query) > 200 {
+			http.Error(w, "Search must contain 1 to 200 characters", http.StatusBadRequest)
+			return
+		}
+		err = h.store.SaveSearch(ctx, meetup, search.Query)
+	default:
+		w.Header().Set("Allow", "GET, PUT")
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if err != nil {
+		log.Print("Failed to load or save meetup search")
+		http.Error(w, "Could not load or save search", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(search); err != nil {
+		log.Print("Failed to encode meetup search response")
 	}
 }
 

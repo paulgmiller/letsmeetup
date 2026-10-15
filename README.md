@@ -17,6 +17,14 @@ Startup verifies connectivity and creates the `guests` table if missing. The dat
 
 This starts fresh; existing Cosmos data is neither imported nor deleted.
 
+The bottom search field is shared per meetup. `GET /meetup-search/<meetup>` returns
+`{"query":"food"}` until a search is saved. `PUT` to the same URL with
+`{"query":"coffee"}` saves the search in the `meetup_searches` table, which is
+created automatically at startup. Searches must contain 1–200 characters.
+Anyone with the meetup link can change its search; the latest save wins, and
+other visitors see it when opening or reloading the page. The database value
+takes precedence over any old `query` URL parameter.
+
 ## Verify
 
 ```sh

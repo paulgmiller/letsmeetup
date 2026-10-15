@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -18,6 +19,11 @@ const guestsSchema = `CREATE TABLE IF NOT EXISTS guests (
  lat DOUBLE PRECISION NOT NULL,
  long DOUBLE PRECISION NOT NULL,
  PRIMARY KEY (meetup_id, guest_id)
+)`
+
+const meetupSearchSchema = `CREATE TABLE IF NOT EXISTS meetup_searches (
+ meetup_id TEXT PRIMARY KEY,
+ query TEXT NOT NULL
 )`
 
 type postgresGuestStore struct {
@@ -47,10 +53,38 @@ func newGuestStore(ctx context.Context, databaseURL string) (*postgresGuestStore
 		pool.Close()
 		return nil, errors.New("failed to create guests table; check database schema and permissions")
 	}
+	if err := retrySerialization(ctx, func() error {
+		_, err := pool.Exec(ctx, meetupSearchSchema)
+		return err
+	}); err != nil {
+		pool.Close()
+		return nil, errors.New("failed to create meetup searches table; check database schema and permissions")
+	}
 	return &postgresGuestStore{pool: pool}, nil
 }
 
 func (s *postgresGuestStore) Close() { s.pool.Close() }
+
+func (s *postgresGuestStore) GetSearch(ctx context.Context, meetup string) (string, error) {
+	query := "food"
+	err := retrySerialization(ctx, func() error {
+		err := s.pool.QueryRow(ctx, `SELECT query FROM meetup_searches WHERE meetup_id = $1`, meetup).Scan(&query)
+		if errors.Is(err, pgx.ErrNoRows) {
+			query = "food"
+			return nil
+		}
+		return err
+	})
+	return query, err
+}
+
+func (s *postgresGuestStore) SaveSearch(ctx context.Context, meetup, query string) error {
+	return retrySerialization(ctx, func() error {
+		_, err := s.pool.Exec(ctx, `INSERT INTO meetup_searches (meetup_id, query) VALUES ($1, $2)
+ ON CONFLICT (meetup_id) DO UPDATE SET query = excluded.query`, meetup, query)
+		return err
+	})
+}
 
 func (s *postgresGuestStore) UpsertAndList(ctx context.Context, g Guest) ([]Guest, error) {
 	err := retrySerialization(ctx, func() error {

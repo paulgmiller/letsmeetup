@@ -97,7 +97,21 @@ func TestGuestStoreIntegration(t *testing.T) {
 		if _, err := store.pool.Exec(cleanupCtx, `DELETE FROM guests WHERE meetup_id IN ($1,$2)`, meetup, otherMeetup); err != nil {
 			t.Error(err)
 		}
+		if _, err := store.pool.Exec(cleanupCtx, `DELETE FROM meetup_searches WHERE meetup_id IN ($1,$2)`, meetup, otherMeetup); err != nil {
+			t.Error(err)
+		}
 	}()
+	if query, err := store.GetSearch(ctx, meetup); err != nil || query != "food" {
+		t.Fatalf("default search: %q %v", query, err)
+	}
+	for _, query := range []string{"coffee", "O'Brien's tea & cake"} {
+		if err := store.SaveSearch(ctx, meetup, query); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if query, err := store.GetSearch(ctx, otherMeetup); err != nil || query != "food" {
+		t.Fatalf("search isolation: %q %v", query, err)
+	}
 	first := Guest{MeetupId: meetup, GuestId: "b", GuestName: "O'Brien", Lat: 47.5, Long: -122.1}
 	guests, err := store.UpsertAndList(ctx, first)
 	if err != nil || !reflect.DeepEqual(guests, []Guest{first}) {
@@ -123,6 +137,9 @@ func TestGuestStoreIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
+	if query, err := reopened.GetSearch(ctx, meetup); err != nil || query != "O'Brien's tea & cake" {
+		t.Fatalf("persisted search: %q %v", query, err)
+	}
 	second := Guest{MeetupId: meetup, GuestId: "a", GuestName: "Second", Lat: -1, Long: 0}
 	guests, err = reopened.UpsertAndList(ctx, second)
 	if err != nil || !reflect.DeepEqual(guests, []Guest{second, first}) {

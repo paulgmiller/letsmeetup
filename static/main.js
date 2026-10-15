@@ -1,4 +1,83 @@
 var map;
+
+// Prepare the meetup link even before the map or geolocation is available.
+var meetupUrl = new URL(window.location.href);
+if (!meetupUrl.searchParams.has('meetup') && !meetupUrl.searchParams.has('m')) {
+  meetupUrl.searchParams.set('m', btoa(Math.floor(Math.random() * 1000000)));
+  window.history.replaceState(null, '', meetupUrl.href);
+}
+
+var searchInput = document.getElementById('search-query');
+var searchButton = document.getElementById('search-button');
+var searchStatus = document.getElementById('search-status');
+var meetupId = meetupUrl.searchParams.get('meetup') || meetupUrl.searchParams.get('m');
+var searchEndpoint = '/meetup-search/' + encodeURIComponent(meetupId);
+var savedQuery;
+searchInput.disabled = true;
+var searchReady = fetch(searchEndpoint, {cache: 'no-store'})
+  .then(function(response) {
+    if (!response.ok) throw new Error('Could not load search');
+    return response.json();
+  })
+  .then(function(search) {
+    savedQuery = search.query;
+    searchInput.value = savedQuery;
+    return true;
+  })
+  .catch(function() {
+    searchStatus.textContent = 'Could not load the shared search. Reload to try again.';
+    return false;
+  })
+  .finally(function() {
+    searchInput.disabled = false;
+    searchButton.disabled = false;
+  });
+
+document.getElementById('search-form').addEventListener('submit', async function(event) {
+  event.preventDefault();
+  var query = searchInput.value.trim();
+  if (!query) {
+    searchInput.focus();
+    return;
+  }
+  searchButton.disabled = true;
+  searchStatus.textContent = 'Saving…';
+  try {
+    var response = await fetch(searchEndpoint, {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({query: query})
+    });
+    if (!response.ok) throw new Error('Could not save search');
+    var url = new URL(window.location.href);
+    url.searchParams.delete('query');
+    window.location.assign(url.href);
+  } catch (error) {
+    searchStatus.textContent = 'Could not save the search. Please try again.';
+    searchButton.disabled = false;
+  }
+});
+
+document.getElementById('share-button').addEventListener('click', async function() {
+  var status = document.getElementById('share-status');
+  var url = window.location.href;
+  status.textContent = '';
+  if (navigator.share) {
+    try {
+      await navigator.share({title: 'Lets meet up', url: url});
+      return;
+    } catch (error) {
+      if (error.name === 'AbortError') return;
+    }
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    status.textContent = 'Link copied!';
+  } catch (error) {
+    window.prompt('Copy this link and send it to your friend:', url);
+  }
+});
+
 //this is dumb
 function uuidv4() {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
@@ -7,17 +86,13 @@ function uuidv4() {
   });
 }
 
-function initMap() {
+async function initMap() {
+  if (!await searchReady) return;
   let urlParams = new URLSearchParams(window.location.search);
   let meetup = urlParams.get('meetup');
   if (meetup == null)
   {
       meetup = urlParams.get('m')
-  }
-  if (meetup == null)
-  {
-    meetup  = btoa(Math.floor(Math.random() * Math.floor(1000000)))
-    window.location.search += ('m=' + meetup)
   }
   console.info("getting current postition")
   navigator.geolocation.getCurrentPosition(function(position) {
@@ -54,11 +129,7 @@ function initMap() {
           var middle = bounds.getCenter()
           var service = new google.maps.places.PlacesService(map);
           
-          let query = urlParams.get('query');
-          if( query == null)
-          {
-            query = 'food'
-          }
+          let query = savedQuery;
           search_request = {location: middle, rankBy: google.maps.places.RankBy.DISTANCE, keyword: query}
           console.info(JSON.stringify(search_request))
           service.nearbySearch(
