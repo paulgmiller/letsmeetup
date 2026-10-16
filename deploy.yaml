@@ -29,8 +29,8 @@ spec:
         - name: DATABASE_URL
           valueFrom:
             secretKeyRef:
-              key: connection-string
-              name: roachmotel-credentials
+              key: DATABASE_URL
+              name: roachkey
         image: paulgmiller/letsmeetup:e0a152c
         imagePullPolicy: Always
         name: letsmeetup
