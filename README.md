@@ -24,6 +24,8 @@ created automatically at startup. Searches must contain 1–200 characters.
 Anyone with the meetup link can change its search; the latest save wins, and
 other visitors see it when opening or reloading the page. The database value
 takes precedence over any old `query` URL parameter.
+Submitting a search updates the map in place. Sharing uses the device's share
+dialog or clipboard, with a selectable link when neither is available.
 
 ## Verify
 
@@ -31,6 +33,7 @@ takes precedence over any old `query` URL parameter.
 go build ./...
 go test ./...
 go vet ./...
+node tests/frontend.test.cjs
 TEST_DATABASE_URL='postgresql://USER:PASSWORD@HOST:26257/TEST_DATABASE?sslmode=verify-full' go test -run TestGuestStoreIntegration -v .
 docker build -t letsmeetup:local .
 ```

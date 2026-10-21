@@ -54,12 +54,11 @@
         <span>send this to your friend</span>
         <button id="share-button" type="button">Share</button>
         <span id="share-status" role="status"></span>
+        <input id="share-link" type="text" aria-label="Meetup link to copy" readonly hidden>
       </div>
     </footer>
-    <script src="https://cdn.jsdelivr.net/npm/js-cookie@2/src/js.cookie.min.js"></script>
-    <script src="https://ajax.googleapis.com/ajax/libs/jquery/3.3.1/jquery.min.js"></script><!--remove?-->
-    <script src="/main.js"></script>
+    <script src="/main.js?v=2"></script>
     <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDOFv6dJjvOaRnP8d3Vf9t9802bSEYGs7U&callback=initMap&libraries=places"
-    async defer></script>
+    async defer onerror="mapLoadFailed()"></script>
   </body>
 </html>
