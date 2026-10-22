@@ -18,15 +18,17 @@ const tick = () => new Promise(setImmediate);
 function app(options = {}) {
   const elements = Object.fromEntries([...readFileSync('static/index.html','utf8').matchAll(/id="([^"]+)"/g)].map(m => [m[1], new Element()]));
   elements['share-link'].hidden = true;
-  const requests = [], searches = [], intervals = [], timers = [];
-  const backend = {guests: [], query: 'food', expired: false};
-  const context = vm.createContext({URL, btoa, crypto: webcrypto, console, setTimeout: (fn,ms) => {timers.push({fn,ms});return timers.length;}, clearTimeout: () => {},
+  const requests = [], searches = [], legacySearches = [], intervals = [], timers = [], locations = [];
+  const backend = {guests: options.guests || [], query: 'food', expired: !!options.expired};
+  const context = vm.createContext({URL, btoa, crypto: webcrypto, console: {error() {}}, setTimeout: (fn,ms) => {timers.push({fn,ms});return timers.length;}, clearTimeout: () => {},
     window: {location: {href: options.url || 'https://meetup.example/?m=friends'},
       history: {replaceState(_s, _t, href) { context.window.location.href = href; }}},
     document: {hidden: false, getElementById: id => elements[id], createElement: () => new Element(),
       addEventListener(event, handler) { this[event] = handler; }},
     navigator: {geolocation: {getCurrentPosition(success, failure) {
+      locations.push({success,failure});
       if (options.locate) return options.locate(success, failure);
+      if (locations.length === 1 && !options.autoJoin) return;
       options.locationError ? failure({message: 'Permission denied'}) : success({coords: {latitude: 47, longitude: -122}});
     }}, ...options.navigator},
     setInterval(fn, delay) { intervals.push({fn, delay}); },
@@ -54,13 +56,13 @@ function app(options = {}) {
       LatLngBounds: class { extend() {} getCenter() { return {lat: 47, lng: -122}; } },
       marker: {PinElement: class { constructor() { this.element = new Element(); } },
         AdvancedMarkerElement: class { constructor(config) { Object.assign(this, config); } append() {} }},
-      places: {SearchByTextRankPreference: {DISTANCE: 'distance'}, Place: {searchByText(request) {
+      places: {RankBy: {DISTANCE:'distance'}, PlacesService: class {nearbySearch(request, callback) {legacySearches.push({request,callback});}}, SearchByTextRankPreference: {DISTANCE: 'distance'}, Place: {searchByText(request) {
         return new Promise((resolve, reject) => searches.push({request, resolve, reject}));
       }}}
     }}
   });
   vm.runInContext(readFileSync('static/main.js', 'utf8'), context);
-  return {context, elements, requests, searches, intervals, timers, backend,
+  return {context, elements, requests, searches, legacySearches, intervals, timers, locations, backend,
     async ready() { await tick(); await context.initMap(); await tick(); },
     async join() { await elements['location-button'].click(); await tick(); },
     async search(query) { elements['search-query'].value = query; return elements['search-form'].submit({preventDefault() {}}); },
@@ -70,7 +72,7 @@ function app(options = {}) {
 }
 const result = name => ({places: [{id: 'place-id', displayName: name, formattedAddress: '123 Main St', location: {lat: 47, lng: -122}}]});
 
-test('opening a meetup reads state without sharing a location', async () => {
+test('a pending location permission leaves the meetup visible without sharing yet', async () => {
   const a = app(); await a.ready();
   assert.equal(a.requests.filter(r => r.method === 'POST').length, 0);
   assert.equal(a.context.appState.guests.length, 0);
@@ -209,31 +211,79 @@ test('a delayed poll cannot replace a newly shared snapshot',async()=>{
 });
 
 
-test('a fresh map centers on local location without posting or joining',async()=>{
- const a=app();await a.ready();
- assert.equal(JSON.stringify(a.context.appState.map.center),JSON.stringify({lat:47,lng:-122}));
+
+test('startup shares the granted location and renders a marker without another click',async()=>{
+ const a=app({autoJoin:true});await a.ready();
+ assert.equal(a.requests.filter(r=>r.method==='POST').length,1);
+ assert.equal(a.context.appState.guests.length,1);
+ assert.equal(a.context.appState.markers.length,1);
+ assert.equal(a.context.appState.markers[0].title,'Friend 1');
+ assert.equal(JSON.stringify(a.context.appState.markers[0].position),JSON.stringify({lat:47,lng:-122}));
  assert.equal(a.context.appState.map.zoom,14);
- assert.equal(a.requests.filter(r=>r.method==='POST').length,0);
- assert.equal(a.context.appState.guests.length,0);
+ assert.equal(a.searches.length,1);
+});
+
+test('startup updates an existing participant without losing their name',async()=>{
+ const a=app({autoJoin:true,guests:[{GuestId:'own',GuestName:'Sam',Lat:10,Long:20},{GuestId:'friend',Lat:11,Long:21}]});
+ await a.ready();
+ const own=a.backend.guests.find(g=>g.GuestId==='own');
+ assert.equal(own.GuestName,'Sam');assert.equal(own.Lat,47);
+ assert.equal(a.backend.guests.length,2);
 });
 
 test('denied startup location leaves map pin selection available',async()=>{
- const a=app({locationError:true});await a.ready();
- assert.match(a.elements['location-status'].textContent,/Allow location access/);
- assert.equal(a.context.appState.map.zoom,3);
+ const a=app({autoJoin:true,locationError:true});await a.ready();
+ assert.match(a.elements['location-status'].textContent,/choose a spot/i);
  assert.equal(a.requests.filter(r=>r.method==='POST').length,0);
  a.elements['pin-button'].click();assert.equal(a.context.appState.choosingPin,true);
 });
 
-test('a late startup location cannot override a shared meetup or a map interaction',async()=>{
- for(const interaction of ['guest','pointerdown','pin','expired']) {
+test('a delayed startup location cannot undo a manual pin, a leave, or expiry',async()=>{
+ for(const interaction of ['pin','leave','expired']) {
   let locate;
   const a=app({locate:success=>{locate=success;}});await a.ready();
-  if(interaction==='guest') {a.backend.guests=[{GuestId:'friend',Lat:10,Long:20}];await a.refresh();}
-  if(interaction==='pointerdown') a.elements.map.pointerdown();
-  if(interaction==='pin') a.elements['pin-button'].click();
+  if(interaction==='pin') {
+   a.elements['pin-button'].click();
+   a.context.appState.map.click({latLng:{lat:()=>12,lng:()=>34}});await tick();
+  }
+  if(interaction==='leave') await a.elements['leave-button'].click();
   if(interaction==='expired') a.context.expireMeetup();
-  locate({coords:{latitude:47,longitude:-122}});
-  assert.equal(a.context.appState.map.center.lat,39,interaction);
+  const posts=a.requests.filter(r=>r.method==='POST').length;
+  locate({coords:{latitude:47,longitude:-122}});await tick();
+  assert.equal(a.requests.filter(r=>r.method==='POST').length,posts,interaction);
  }
+});
+
+test('disabled Places API New falls back to the working original API',async()=>{
+ const a=app();await a.ready();await a.join();
+ const error=new Error('Places API (New) has not been used in project 123 before or it is disabled.');error.code='PERMISSION_DENIED';
+ a.searches[0].reject(error);await tick();
+ assert.equal(a.legacySearches.length,1);
+ assert.equal(a.legacySearches[0].request.keyword,'food');
+ a.legacySearches[0].callback([{place_id:'legacy-id',name:'Coffee',vicinity:'123 Main St',geometry:{location:{lat:47,lng:-122}}}],'OK');await tick();
+ assert.equal(a.elements['places'].children.length,1);
+ assert.match(a.elements['places'].children[0].children[1].href,/legacy-id/);
+ const searching=a.search('tea');await tick();
+ assert.equal(a.searches.length,1,'do not repeatedly call the disabled API');
+ assert.equal(a.legacySearches[1].request.keyword,'tea');
+ a.legacySearches[1].callback([],'ZERO_RESULTS');await searching;
+ assert.match(a.elements['search-status'].textContent,/No places found/);
+});
+
+test('permission and quota failures are specific and do not trigger a fallback',async()=>{
+ for(const [code,message] of [['PERMISSION_DENIED',/not enabled/],['RESOURCE_EXHAUSTED',/limit/]]) {
+  const a=app();await a.ready();await a.join();
+  const error=new Error('Search failed');error.code=code;
+  a.searches[0].reject(error);await tick();
+  assert.equal(a.legacySearches.length,0);
+  assert.match(a.elements['search-status'].textContent,message);
+ }
+});
+
+
+test('opening an expired meetup never shares the granted location',async()=>{
+ const a=app({autoJoin:true,expired:true});await a.ready();
+ assert.equal(a.context.appState.expired,true);
+ assert.equal(a.locations.length,0);
+ assert.equal(a.requests.filter(r=>r.method==='POST').length,0);
 });

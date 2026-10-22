@@ -30,7 +30,7 @@ spec:
             secretKeyRef:
               key: DATABASE_URL
               name: roachkey
-        image: paulgmiller/letsmeetup:7da7c35
+        image: paulgmiller/letsmeetup:627e99a
         imagePullPolicy: Always
         name: letsmeetup
         readinessProbe:

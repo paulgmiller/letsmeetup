@@ -11,7 +11,7 @@ var meetupId = meetupUrl.searchParams.get('meetup') || meetupUrl.searchParams.ge
 var endpoint = '/meetups/' + encodeURIComponent(meetupId);
 var searchEndpoint = '/meetup-search/' + encodeURIComponent(meetupId);
 var appState = {guests: [], ownID: '', query: '', map: null, markers: [], placeMarkers: [],
-  choosingPin: false, expired: false, refreshing: false, revision: 0, generation: 0, busy: false, mapError: false, savingSearch: false, expiryTimer: null, initialViewMoved: false};
+  choosingPin: false, expired: false, refreshing: false, revision: 0, generation: 0, busy: false, mapError: false, savingSearch: false, expiryTimer: null, placesProvider: 'new'};
 
 function expireMeetup() {
   appState.expired = true;
@@ -94,6 +94,7 @@ async function initMap() {
   if (appState.map) return;
   try {
     await Promise.all(['maps', 'marker', 'places'].map(name => google.maps.importLibrary(name)));
+    await initialMeetup;
     appState.map = new google.maps.Map($('map'), {center: {lat: 39, lng: -98}, zoom: 3,
       mapId: 'DEMO_MAP_ID', mapTypeControl: false, streetViewControl: false, fullscreenControl: false});
     appState.map.addListener('click', event => {
@@ -101,24 +102,9 @@ async function initMap() {
         saveLocation(event.latLng.lat(), event.latLng.lng());
       }
     });
-    // Center locally without joining or publishing coordinates to the meetup.
-    if (!appState.guests.length && !appState.expired) {
-      ['pointerdown', 'wheel'].forEach(event => $('map').addEventListener(event, () => { appState.initialViewMoved = true; }));
-      if (navigator.geolocation) {
-        var revision = appState.revision;
-        navigator.geolocation.getCurrentPosition(position => {
-          if (appState.expired || appState.guests.length || appState.choosingPin || appState.initialViewMoved || appState.revision !== revision) return;
-          appState.map.setCenter({lat: position.coords.latitude, lng: position.coords.longitude});
-          appState.map.setZoom(14);
-        }, () => {
-          if (!appState.expired && !appState.guests.length && !appState.busy && !appState.choosingPin) {
-            $('location-status').textContent = 'Allow location access to start near you, or choose a spot on the map.';
-          }
-        }, {timeout: 15000, maximumAge: 60000});
-      }
-    }
     renderGuestMarkers();
     searchNearby();
+    if (!appState.expired && appState.revision === 0) locateAndShare(true);
   } catch (error) { mapLoadFailed(); }
 }
 
@@ -158,11 +144,7 @@ async function searchNearby() {
   var center = bounds.getCenter();
   $('search-status').textContent = 'Finding “' + appState.query + '” near the middle…';
   try {
-    // Text search preserves free-form queries such as “tea & cake”.
-    var response = await google.maps.places.Place.searchByText({textQuery: appState.query,
-      fields: ['id', 'displayName', 'formattedAddress', 'location'],
-      locationBias: {center: center, radius: 5000}, rankPreference: google.maps.places.SearchByTextRankPreference.DISTANCE,
-      maxResultCount: 3});
+    var response = await findPlaces(appState.query, center);
     if (generation !== appState.generation || appState.expired) return;
     var places = (response.places || []).filter(place => place.location);
     places.slice(0, 3).forEach((place, index) => {
@@ -188,8 +170,51 @@ async function searchNearby() {
     if (places.length) appState.map.fitBounds(bounds, 60);
     $('search-status').textContent = places.length ? 'Places near the center of your shared locations.' : 'No places found. Try another search.';
   } catch (error) {
-    if (generation === appState.generation && !appState.expired) $('search-status').textContent = 'Could not find places. Try searching again.';
+    if (generation === appState.generation && !appState.expired) {
+      console.error('Place search failed:', error);
+      $('search-status').textContent = placeSearchError(error);
+    }
   }
+}
+
+function legacyPlaces(query, center) {
+  return new Promise((resolve, reject) => {
+    new google.maps.places.PlacesService(appState.map).nearbySearch({
+      location: center, rankBy: google.maps.places.RankBy.DISTANCE, keyword: query
+    }, (results, status) => {
+      if (status === 'ZERO_RESULTS') { resolve({places: []}); return; }
+      if (status !== 'OK') { var error = new Error('Place search failed'); error.code = status; reject(error); return; }
+      resolve({places: (results || []).slice(0, 3).map(place => ({
+        id: place.place_id, displayName: place.name, formattedAddress: place.vicinity,
+        location: place.geometry && place.geometry.location
+      }))});
+    });
+  });
+}
+
+async function findPlaces(query, center) {
+  if (appState.placesProvider === 'legacy') return legacyPlaces(query, center);
+  try {
+    // Text search preserves free-form queries such as “tea & cake”.
+    return await google.maps.places.Place.searchByText({textQuery: query,
+      fields: ['id', 'displayName', 'formattedAddress', 'location'],
+      locationBias: {center: center, radius: 5000}, rankPreference: google.maps.places.SearchByTextRankPreference.DISTANCE,
+      maxResultCount: 3});
+  } catch (error) {
+    // Older projects may still have only the original Places API enabled.
+    // Fall back only for that configuration error, not quotas or bad requests.
+    if (error.code === 'PERMISSION_DENIED' && /Places API \(New\).*?(disabled|not.*used)/i.test(error.message || '') && google.maps.places.PlacesService) {
+      appState.placesProvider = 'legacy';
+      return legacyPlaces(query, center);
+    }
+    throw error;
+  }
+}
+
+function placeSearchError(error) {
+  if (['PERMISSION_DENIED', 'REQUEST_DENIED'].includes(error.code)) return 'Place search is not enabled for this map. Check the Google Maps API settings.';
+  if (['RESOURCE_EXHAUSTED', 'OVER_QUERY_LIMIT'].includes(error.code)) return 'The place search limit has been reached. Please try again later.';
+  return 'Could not find places. Try searching again.';
 }
 
 function setBusy(busy) {
@@ -216,20 +241,27 @@ async function saveLocation(lat, lng) {
   } finally { appState.revision++; setBusy(false); }
 }
 
-$('location-button').addEventListener('click', () => {
+function locateAndShare(automatic = false) {
   if (!navigator.geolocation) { $('location-status').textContent = 'Location is unavailable. Choose a spot on the map instead.'; return; }
-  setBusy(true);
+  var revision = appState.revision;
+  var canceled = () => appState.expired || (automatic && (appState.revision !== revision || appState.choosingPin || appState.busy));
+  if (!automatic) setBusy(true);
   $('location-status').textContent = 'Waiting for location permission…';
   navigator.geolocation.getCurrentPosition(position => {
+    if (canceled()) return;
     saveLocation(position.coords.latitude, position.coords.longitude);
   }, () => {
-    setBusy(false);
-    if (!appState.expired) $('location-status').textContent = 'Could not get your location. Allow access and try again, or choose a spot on the map.';
+    if (canceled()) return;
+    if (!automatic) setBusy(false);
+    $('location-status').textContent = 'Could not get your location. Allow access and try again, or choose a spot on the map.';
   }, {timeout: 15000, maximumAge: 60000});
-});
+}
+
+$('location-button').addEventListener('click', () => locateAndShare());
 
 $('pin-button').addEventListener('click', () => {
   if (!appState.map) { $('location-status').textContent = 'Wait for the map to load, then try again.'; return; }
+  appState.revision++; // Cancel any pending startup location request.
   appState.choosingPin = !appState.choosingPin;
   $('pin-button').setAttribute('aria-pressed', String(appState.choosingPin));
   $('location-status').textContent = appState.choosingPin ? 'Tap a spot on the map to share that location. Tap “Choose on map” again to cancel.' : 'Pin selection canceled.';
@@ -279,6 +311,6 @@ $('share-button').addEventListener('click', async () => {
   catch (error) { var link = $('share-link'); link.value = url; link.hidden = false; link.focus(); link.select(); status.textContent = 'Copy this link and send it to a friend.'; }
 });
 
-refreshMeetup();
+var initialMeetup = refreshMeetup();
 setInterval(refreshMeetup, 12000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshMeetup(); });

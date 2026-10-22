@@ -29,14 +29,19 @@ The browser key in `static/index.html` must belong to a Google Cloud project wit
 its website and API restrictions appropriate for the deployed origin. The UI
 uses the new Place text search and Advanced Markers, with Google’s `DEMO_MAP_ID`;
 replace that map ID with your project’s map ID if you want custom map styling.
-The old Places API alone is insufficient. See Google’s
+If Places API (New) is disabled on an older project, the app falls back to its
+already-enabled original Places API for that page session. It does not fall back
+for quota or other permission errors. Enable Places API (New) to use the modern
+search API on the next page load. See Google’s
 [Places migration guide](https://developers.google.com/maps/documentation/javascript/legacy/places-migration-overview).
 
 ## Meetup behavior
 
 - New links use 22-character random tokens (128 bits); existing `?m=` and `?meetup=` links still open.
-- Opening a link shows the meetup and uses your location to center a fresh map.
-  Centering does not save your location or join the meetup; sharing is explicit.
+- Opening a link requests your location and automatically joins with a snapshot
+  once the browser allows access, including when permission was previously granted.
+  An existing participant’s name is preserved. Denying access leaves the map and
+  manual pin selection available.
 - “Use my location” shares one snapshot. “Choose on map” lets you pan, zoom, and
   tap a location instead. The optional name can be edited after joining.
 - Visible pages refresh participants and the shared search every 12 seconds,
@@ -57,7 +62,7 @@ Startup creates the `meetups`, `guests`, and `meetup_searches` tables if needed.
 The database user needs table creation and read/write permissions. Existing SQL
 meetups get a one-time 24-hour lifetime on the first startup with this version.
 Existing guest rows remain visible until expiry, but old `GuestId` browser cookies
-are not imported as credentials; a returning visitor explicitly joins again.
+are not imported as credentials; a returning visitor joins again when location access is allowed.
 Existing Cosmos data is neither imported nor deleted.
 
 ## API
@@ -94,7 +99,7 @@ docker build -t letsmeetup:local .
 Use a disposable database for integration tests. They cover initialization,
 updates, meetup isolation, persistence, read-only lists, leaving, expiry, and
 cleanup without deleting active meetups. Tests remove their own rows afterward.
-The dependency-free frontend tests cover explicit joining, polling, map pin
+The dependency-free frontend tests cover automatic and manual joining, polling, map pin
 selection, stale responses, directions, leaving, expiry, and sharing fallbacks.
 
 For a browser smoke check, open the same link in two separate browser profiles.
