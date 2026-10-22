@@ -20,8 +20,7 @@ certificate parameters. Keep credentials outside Git. The server listens on
 port 8080. HTML, CSS, and JavaScript are embedded in the binary, so a compiled
 binary can run from any directory. Rebuild after changing frontend files.
 
-Serve the app over HTTPS in production. Geolocation and random invite generation
-require a secure browser context; `http://localhost:8080` also works for local use.
+Serve the app over HTTPS in production. Geolocation requires a secure browser context; `http://localhost:8080` also works for local use.
 The identity cookie becomes Secure on HTTPS or behind a trusted reverse proxy
 that sets `X-Forwarded-Proto: https`.
 
@@ -35,8 +34,9 @@ The old Places API alone is insufficient. See Google’s
 
 ## Meetup behavior
 
-- New links use random UUIDs; existing `?m=` and `?meetup=` links still open.
-- Opening a link shows the meetup without requesting or saving a location.
+- New links use 22-character random tokens (128 bits); existing `?m=` and `?meetup=` links still open.
+- Opening a link shows the meetup and uses your location to center a fresh map.
+  Centering does not save your location or join the meetup; sharing is explicit.
 - “Use my location” shares one snapshot. “Choose on map” lets you pan, zoom, and
   tap a location instead. The optional name can be edited after joining.
 - Visible pages refresh participants and the shared search every 12 seconds,

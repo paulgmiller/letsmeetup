@@ -2,14 +2,16 @@
 var $ = id => document.getElementById(id);
 var meetupUrl = new URL(window.location.href);
 if (!meetupUrl.searchParams.get('meetup') && !meetupUrl.searchParams.get('m')) {
-  meetupUrl.searchParams.set('m', crypto.randomUUID());
+  var inviteBytes = crypto.getRandomValues(new Uint8Array(16));
+  var invite = btoa(String.fromCharCode(...inviteBytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  meetupUrl.searchParams.set('m', invite);
   window.history.replaceState(null, '', meetupUrl.href);
 }
 var meetupId = meetupUrl.searchParams.get('meetup') || meetupUrl.searchParams.get('m');
 var endpoint = '/meetups/' + encodeURIComponent(meetupId);
 var searchEndpoint = '/meetup-search/' + encodeURIComponent(meetupId);
 var appState = {guests: [], ownID: '', query: '', map: null, markers: [], placeMarkers: [],
-  choosingPin: false, expired: false, refreshing: false, revision: 0, generation: 0, busy: false, mapError: false, savingSearch: false, expiryTimer: null};
+  choosingPin: false, expired: false, refreshing: false, revision: 0, generation: 0, busy: false, mapError: false, savingSearch: false, expiryTimer: null, initialViewMoved: false};
 
 function expireMeetup() {
   appState.expired = true;
@@ -99,6 +101,22 @@ async function initMap() {
         saveLocation(event.latLng.lat(), event.latLng.lng());
       }
     });
+    // Center locally without joining or publishing coordinates to the meetup.
+    if (!appState.guests.length && !appState.expired) {
+      ['pointerdown', 'wheel'].forEach(event => $('map').addEventListener(event, () => { appState.initialViewMoved = true; }));
+      if (navigator.geolocation) {
+        var revision = appState.revision;
+        navigator.geolocation.getCurrentPosition(position => {
+          if (appState.expired || appState.guests.length || appState.choosingPin || appState.initialViewMoved || appState.revision !== revision) return;
+          appState.map.setCenter({lat: position.coords.latitude, lng: position.coords.longitude});
+          appState.map.setZoom(14);
+        }, () => {
+          if (!appState.expired && !appState.guests.length && !appState.busy && !appState.choosingPin) {
+            $('location-status').textContent = 'Allow location access to start near you, or choose a spot on the map.';
+          }
+        }, {timeout: 15000, maximumAge: 60000});
+      }
+    }
     renderGuestMarkers();
     searchNearby();
   } catch (error) { mapLoadFailed(); }

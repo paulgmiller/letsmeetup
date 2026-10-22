@@ -20,12 +20,13 @@ function app(options = {}) {
   elements['share-link'].hidden = true;
   const requests = [], searches = [], intervals = [], timers = [];
   const backend = {guests: [], query: 'food', expired: false};
-  const context = vm.createContext({URL, crypto: webcrypto, console, setTimeout: (fn,ms) => {timers.push({fn,ms});return timers.length;}, clearTimeout: () => {},
+  const context = vm.createContext({URL, btoa, crypto: webcrypto, console, setTimeout: (fn,ms) => {timers.push({fn,ms});return timers.length;}, clearTimeout: () => {},
     window: {location: {href: options.url || 'https://meetup.example/?m=friends'},
       history: {replaceState(_s, _t, href) { context.window.location.href = href; }}},
     document: {hidden: false, getElementById: id => elements[id], createElement: () => new Element(),
       addEventListener(event, handler) { this[event] = handler; }},
     navigator: {geolocation: {getCurrentPosition(success, failure) {
+      if (options.locate) return options.locate(success, failure);
       options.locationError ? failure({message: 'Permission denied'}) : success({coords: {latitude: 47, longitude: -122}});
     }}, ...options.navigator},
     setInterval(fn, delay) { intervals.push({fn, delay}); },
@@ -49,7 +50,7 @@ function app(options = {}) {
     },
     google: {maps: {
       importLibrary: async () => ({}),
-      Map: class { addListener(event, fn) { this[event] = fn; } fitBounds() {} setZoom() {} },
+      Map: class { constructor(_element,config) { this.center=config.center;this.zoom=config.zoom;this.fits=0; } addListener(event, fn) { this[event] = fn; } fitBounds() {this.fits++;} setZoom(zoom) {this.zoom=zoom;} setCenter(center) {this.center=center;} },
       LatLngBounds: class { extend() {} getCenter() { return {lat: 47, lng: -122}; } },
       marker: {PinElement: class { constructor() { this.element = new Element(); } },
         AdvancedMarkerElement: class { constructor(config) { Object.assign(this, config); } append() {} }},
@@ -78,9 +79,13 @@ test('opening a meetup reads state without sharing a location', async () => {
   assert.equal(a.intervals[0].delay, 12000);
 });
 
-test('new links use a random UUID and existing invite links survive', async () => {
+test('new links use compact random tokens and existing invite links survive', async () => {
   const a = app({url: 'https://meetup.example/'});
-  assert.match(new URL(a.context.window.location.href).searchParams.get('m'), /^[0-9a-f-]{36}$/);
+  const token=new URL(a.context.window.location.href).searchParams.get('m');
+  assert.match(token, /^[A-Za-z0-9_-]{22}$/);
+  assert.equal(Buffer.from(token,'base64url').length,16);
+  const another=app({url: 'https://meetup.example/'});
+  assert.notEqual(new URL(another.context.window.location.href).searchParams.get('m'),token);
   const b = app({url: 'https://meetup.example/?meetup=legacy'}); await b.ready();
   assert.equal(b.requests[0].url, '/meetups/legacy');
 });
@@ -201,4 +206,34 @@ test('a delayed poll cannot replace a newly shared snapshot',async()=>{
  assert.equal(a.context.appState.guests.length,1);
  hold=false;release();await poll;
  assert.equal(a.context.appState.guests.length,1);
+});
+
+
+test('a fresh map centers on local location without posting or joining',async()=>{
+ const a=app();await a.ready();
+ assert.equal(JSON.stringify(a.context.appState.map.center),JSON.stringify({lat:47,lng:-122}));
+ assert.equal(a.context.appState.map.zoom,14);
+ assert.equal(a.requests.filter(r=>r.method==='POST').length,0);
+ assert.equal(a.context.appState.guests.length,0);
+});
+
+test('denied startup location leaves map pin selection available',async()=>{
+ const a=app({locationError:true});await a.ready();
+ assert.match(a.elements['location-status'].textContent,/Allow location access/);
+ assert.equal(a.context.appState.map.zoom,3);
+ assert.equal(a.requests.filter(r=>r.method==='POST').length,0);
+ a.elements['pin-button'].click();assert.equal(a.context.appState.choosingPin,true);
+});
+
+test('a late startup location cannot override a shared meetup or a map interaction',async()=>{
+ for(const interaction of ['guest','pointerdown','pin','expired']) {
+  let locate;
+  const a=app({locate:success=>{locate=success;}});await a.ready();
+  if(interaction==='guest') {a.backend.guests=[{GuestId:'friend',Lat:10,Long:20}];await a.refresh();}
+  if(interaction==='pointerdown') a.elements.map.pointerdown();
+  if(interaction==='pin') a.elements['pin-button'].click();
+  if(interaction==='expired') a.context.expireMeetup();
+  locate({coords:{latitude:47,longitude:-122}});
+  assert.equal(a.context.appState.map.center.lat,39,interaction);
+ }
 });
