@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"reflect"
 	"strings"
@@ -97,10 +99,26 @@ func TestGuestStoreIntegration(t *testing.T) {
 		if _, err := store.pool.Exec(cleanupCtx, `DELETE FROM guests WHERE meetup_id IN ($1,$2)`, meetup, otherMeetup); err != nil {
 			t.Error(err)
 		}
+		if _, err := store.pool.Exec(cleanupCtx, `DELETE FROM meetups WHERE meetup_id IN ($1,$2)`, meetup, otherMeetup); err != nil {
+			t.Error(err)
+		}
 		if _, err := store.pool.Exec(cleanupCtx, `DELETE FROM meetup_searches WHERE meetup_id IN ($1,$2)`, meetup, otherMeetup); err != nil {
 			t.Error(err)
 		}
 	}()
+	var originalExpiry time.Time
+	for _, id := range []string{meetup, otherMeetup} {
+		if _, err := store.EnsureMeetup(ctx, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	originalExpiry, err = store.EnsureMeetup(ctx, meetup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repeated, err := store.EnsureMeetup(ctx, meetup); err != nil || !repeated.Equal(originalExpiry) {
+		t.Fatal("visit extended lifetime")
+	}
 	if query, err := store.GetSearch(ctx, meetup); err != nil || query != "food" {
 		t.Fatalf("default search: %q %v", query, err)
 	}
@@ -131,12 +149,26 @@ func TestGuestStoreIntegration(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(guests, []Guest{other}) {
 		t.Fatalf("isolation: %+v %v", guests, err)
 	}
+	// Simulate an old room that predates the lifetime table.
+	if _, err := store.pool.Exec(ctx, `DELETE FROM meetups WHERE meetup_id=$1`, otherMeetup); err != nil {
+		t.Fatal(err)
+	}
 	// A new pool runs schema initialization again and sees persisted records.
 	reopened, err := newGuestStore(ctx, url)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer reopened.Close()
+	if expiry, err := reopened.EnsureMeetup(ctx, meetup); err != nil || !expiry.Equal(originalExpiry) {
+		t.Fatal("restart reset lifetime")
+	}
+	if _, err := reopened.EnsureMeetup(ctx, otherMeetup); err != nil {
+		t.Fatal("legacy room was not migrated")
+	}
+
+	if list, err := reopened.List(ctx, meetup); err != nil || !reflect.DeepEqual(list, []Guest{first}) {
+		t.Fatalf("read-only list: %+v %v", list, err)
+	}
 	if query, err := reopened.GetSearch(ctx, meetup); err != nil || query != "O'Brien's tea & cake" {
 		t.Fatalf("persisted search: %q %v", query, err)
 	}
@@ -151,6 +183,62 @@ func TestGuestStoreIntegration(t *testing.T) {
 	}
 	if count != 2 {
 		t.Fatalf("got %d rows, want 2", count)
+	}
+	// Leaving removes only this participant in this meetup.
+	if err := reopened.Leave(ctx, meetup, second.GuestId); err != nil {
+		t.Fatal(err)
+	}
+	if list, err := reopened.List(ctx, meetup); err != nil || len(list) != 1 {
+		t.Fatalf("leave: %+v %v", list, err)
+	}
+	if _, err := reopened.pool.Exec(ctx, `UPDATE meetups SET expires_at=CURRENT_TIMESTAMP-INTERVAL '1 hour' WHERE meetup_id=$1`, meetup); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := reopened.EnsureMeetup(ctx, meetup); !errors.Is(err, errExpired) {
+		t.Fatalf("expired room reopened: %v", err)
+	}
+	if list, err := reopened.List(ctx, meetup); err != nil || len(list) != 0 {
+		t.Fatalf("expired locations visible: %+v %v", list, err)
+	}
+	// Every endpoint rejects an expired room before reading or mutating data.
+	for _, tc := range []struct{ method, prefix, body string }{
+		{"GET", "/meetups/", ""}, {"POST", "/meetups/", `{"Lat":0,"Long":0}`}, {"DELETE", "/meetups/", ""},
+		{"GET", "/meetup-search/", ""}, {"PUT", "/meetup-search/", `{"query":"coffee"}`},
+	} {
+		var next http.Handler = &MeetupHandler{store: reopened}
+		if tc.prefix == "/meetup-search/" {
+			next = &MeetupSearchHandler{store: reopened}
+		}
+		w := httptest.NewRecorder()
+		meetupLifetime(reopened, tc.prefix, next).ServeHTTP(w, httptest.NewRequest(tc.method, tc.prefix+meetup, strings.NewReader(tc.body)))
+		if w.Code != 410 {
+			t.Fatalf("expired %s %s returned %d", tc.method, tc.prefix, w.Code)
+		}
+	}
+	if _, err := reopened.UpsertAndList(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	if err := reopened.pool.QueryRow(ctx, `SELECT count(*) FROM guests WHERE meetup_id=$1`, meetup).Scan(&count); err != nil || count != 1 {
+		t.Fatal("expired snapshot was reinserted")
+	}
+	if query, err := reopened.GetSearch(ctx, meetup); err != nil || query != "food" {
+		t.Fatal("expired search visible")
+	}
+	if err := reopened.cleanupExpired(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := reopened.pool.QueryRow(ctx, `SELECT count(*) FROM guests WHERE meetup_id=$1`, meetup).Scan(&count); err != nil || count != 0 {
+		t.Fatalf("cleanup count=%d err=%v", count, err)
+	}
+	if _, err := reopened.EnsureMeetup(ctx, meetup); !errors.Is(err, errExpired) {
+		t.Fatalf("tombstone lost: %v", err)
+	}
+	if err := reopened.pool.QueryRow(ctx, `SELECT count(*) FROM meetup_searches WHERE meetup_id=$1`, meetup).Scan(&count); err != nil || count != 0 {
+		t.Fatal("expired search was not deleted")
+	}
+
+	if list, err := reopened.List(ctx, otherMeetup); err != nil || len(list) != 1 {
+		t.Fatal("cleanup removed active room")
 	}
 	reopened.Close()
 	if _, err := reopened.UpsertAndList(ctx, first); err == nil {

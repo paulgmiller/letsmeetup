@@ -2,163 +2,203 @@ const assert = require('node:assert/strict');
 const {readFileSync} = require('node:fs');
 const {test} = require('node:test');
 const vm = require('node:vm');
+const {webcrypto} = require('node:crypto');
 
+class Element {
+  constructor() { this.value = ''; this.textContent = ''; this.children = []; this.hidden = false; }
+  addEventListener(event, handler) { this[event] = handler; }
+  setAttribute(name, value) { this[name] = value; }
+  append(...children) { this.children.push(...children); }
+  replaceChildren(...children) { this.children = children; }
+  focus() { this.focused = true; }
+  select() { this.selected = true; }
+  scrollIntoView() {}
+}
+const tick = () => new Promise(setImmediate);
 function app(options = {}) {
-  const elements = {};
-  for (const id of ['search-query', 'search-button', 'search-status', 'search-form',
-    'share-button', 'share-status', 'share-link', 'map']) {
-    elements[id] = {value: '', textContent: '', hidden: id === 'share-link',
-      addEventListener(event, handler) { this[event] = handler; },
-      focus() { this.focused = true; }, select() { this.selected = true; }};
-  }
-  const requests = [], searches = [], markers = [];
-  const context = vm.createContext({
-    URL, URLSearchParams, btoa, console,
-    window: {location: {href: 'https://meetup.example/?m=friends&query=old'},
-      history: {replaceState(_state, _title, href) { context.window.location.href = href; }}},
-    document: {cookie: 'GuestId=existing-guest', getElementById: id => elements[id],
-      createElement: () => ({textContent: ''})},
-    navigator: {
-      geolocation: {getCurrentPosition(success, failure) {
-        return options.locationError ? failure({message: 'Permission denied'}) :
-          success({coords: {latitude: 47, longitude: -122}});
-      }},
-      ...options.navigator
-    },
+  const elements = Object.fromEntries([...readFileSync('static/index.html','utf8').matchAll(/id="([^"]+)"/g)].map(m => [m[1], new Element()]));
+  elements['share-link'].hidden = true;
+  const requests = [], searches = [], intervals = [], timers = [];
+  const backend = {guests: [], query: 'food', expired: false};
+  const context = vm.createContext({URL, crypto: webcrypto, console, setTimeout: (fn,ms) => {timers.push({fn,ms});return timers.length;}, clearTimeout: () => {},
+    window: {location: {href: options.url || 'https://meetup.example/?m=friends'},
+      history: {replaceState(_s, _t, href) { context.window.location.href = href; }}},
+    document: {hidden: false, getElementById: id => elements[id], createElement: () => new Element(),
+      addEventListener(event, handler) { this[event] = handler; }},
+    navigator: {geolocation: {getCurrentPosition(success, failure) {
+      options.locationError ? failure({message: 'Permission denied'}) : success({coords: {latitude: 47, longitude: -122}});
+    }}, ...options.navigator},
+    setInterval(fn, delay) { intervals.push({fn, delay}); },
     fetch: async (url, init = {}) => {
       requests.push({url, ...init});
-      if (init.method === 'POST') return {ok: true, json: async () => [{Lat: 47, Long: -122}]};
-      return {ok: init.method === 'PUT' ? !options.saveError : !options.loadError,
-        json: async () => ({query: 'food'})};
+      if (options.beforeFetch) await options.beforeFetch(url, init);
+      if (backend.expired) return {ok: false, status: 410};
+      if (options.offline || (options.saveError && init.method === 'PUT')) return {ok: false, status: 500};
+      const search = url.startsWith('/meetup-search/');
+      if (init.method === 'POST') {
+        const guest = {...JSON.parse(init.body), GuestId: 'own'};
+        backend.guests = backend.guests.filter(g => g.GuestId !== 'own').concat(guest);
+      }
+      if (init.method === 'DELETE') backend.guests = backend.guests.filter(g => g.GuestId !== 'own');
+      if (init.method === 'PUT') backend.query = JSON.parse(init.body).query;
+      // Capture data now, rather than sharing mutable backend arrays with the page.
+      const data = JSON.parse(JSON.stringify(search ? {query: backend.query} : backend.guests));
+      return {ok: true, status: init.method === 'DELETE' ? 204 : 200,
+        headers: {get: name => name === 'X-Guest-ID' ? 'own' : name === 'X-Meetup-Expires' ? '2030-01-01T12:00:00Z' : null},
+        json: async () => {if (options.beforeJSON) await options.beforeJSON(url,init);return data;}};
     },
     google: {maps: {
-      Map: class { fitBounds() {} },
+      importLibrary: async () => ({}),
+      Map: class { addListener(event, fn) { this[event] = fn; } fitBounds() {} setZoom() {} },
       LatLngBounds: class { extend() {} getCenter() { return {lat: 47, lng: -122}; } },
-      Marker: class {
-        constructor(config) { this.config = config; markers.push(this); }
-        addListener(event, callback) { this[event] = callback; }
-        setMap(map) { this.config.map = map; }
-      },
-      InfoWindow: class { open() {} close() {} }, Size: class {}, Animation: {DROP: 'drop'},
-      places: {RankBy: {DISTANCE: 'distance'}, PlacesService: class {
-        nearbySearch(request, callback) { searches.push({request, callback}); }
-      }}
+      marker: {PinElement: class { constructor() { this.element = new Element(); } },
+        AdvancedMarkerElement: class { constructor(config) { Object.assign(this, config); } append() {} }},
+      places: {SearchByTextRankPreference: {DISTANCE: 'distance'}, Place: {searchByText(request) {
+        return new Promise((resolve, reject) => searches.push({request, resolve, reject}));
+      }}}
     }}
   });
   vm.runInContext(readFileSync('static/main.js', 'utf8'), context);
-  return {context, elements, requests, searches, markers,
-    async ready() { await context.initMap(); await new Promise(setImmediate); },
-    async search(query) {
-      elements['search-query'].value = query;
-      await elements['search-form'].submit({preventDefault() {}});
-    },
-    async share() { await elements['share-button'].click(); }
+  return {context, elements, requests, searches, intervals, timers, backend,
+    async ready() { await tick(); await context.initMap(); await tick(); },
+    async join() { await elements['location-button'].click(); await tick(); },
+    async search(query) { elements['search-query'].value = query; return elements['search-form'].submit({preventDefault() {}}); },
+    async share() { await elements['share-button'].click(); },
+    async refresh() { await context.refreshMeetup(); await tick(); }
   };
 }
+const result = name => ({places: [{id: 'place-id', displayName: name, formattedAddress: '123 Main St', location: {lat: 47, lng: -122}}]});
 
-const result = name => [{name, icon: 'icon.png', geometry: {location: {lat: 47, lng: -122}}}];
-
-test('search saves the meetup query and refreshes places without navigation or another location request', async () => {
-  const a = app();
-  await a.ready();
-  a.searches[0].callback(result('Food'), 'OK');
-  const oldMarker = a.markers[1];
-  await a.search('  coffee  ');
-  assert.equal(JSON.parse(a.requests.at(-1).body).query, 'coffee');
-  assert.equal(a.requests.at(-1).url, '/meetup-search/friends');
-  assert.equal(a.searches[1].request.keyword, 'coffee');
-  a.searches[1].callback(result('Coffee'), 'OK');
-  assert.equal(oldMarker.config.map, null);
-  assert.match(a.elements['search-status'].textContent, /Showing 1.*coffee/);
-  assert.equal(a.elements['search-button'].disabled, false);
-  assert.equal(a.context.window.location.href, 'https://meetup.example/?m=friends');
-  assert.equal(a.requests.filter(r => r.method === 'POST').length, 1);
-  assert.equal(JSON.parse(a.requests.find(r => r.method === 'POST').body).GuestId, 'existing-guest');
-});
-
-test('late places responses cannot replace a newer search', async () => {
-  const a = app();
-  await a.ready();
-  await a.search('coffee');
-  a.searches[1].callback(result('Coffee'), 'OK');
-  a.searches[0].callback(result('Stale food'), 'OK');
-  assert.match(a.elements['search-status'].textContent, /coffee/);
-  assert.equal(a.context.placeMarkers[0].config.title, 'Coffee');
-});
-
-test('a successful save recovers from a failed initial search lookup', async () => {
-  const a = app({loadError: true});
-  await a.ready();
-  assert.match(a.elements['search-status'].textContent, /Could not load the shared search/);
+test('opening a meetup reads state without sharing a location', async () => {
+  const a = app(); await a.ready();
+  assert.equal(a.requests.filter(r => r.method === 'POST').length, 0);
+  assert.equal(a.context.appState.guests.length, 0);
   assert.equal(a.searches.length, 0);
-  await a.search('coffee');
-  await new Promise(setImmediate);
-  assert.equal(a.searches[0].request.keyword, 'coffee');
+  assert.equal(a.elements['search-query'].value, 'food');
+  assert.equal(a.intervals[0].delay, 12000);
 });
 
-test('empty results and places failures have visible feedback', async () => {
-  const a = app();
-  await a.ready();
-  a.searches[0].callback([], 'ZERO_RESULTS');
-  assert.match(a.elements['search-status'].textContent, /No nearby places/);
-  await a.search('tea');
-  a.searches[1].callback(null, 'REQUEST_DENIED');
-  assert.match(a.elements['search-status'].textContent, /REQUEST_DENIED/);
+test('new links use a random UUID and existing invite links survive', async () => {
+  const a = app({url: 'https://meetup.example/'});
+  assert.match(new URL(a.context.window.location.href).searchParams.get('m'), /^[0-9a-f-]{36}$/);
+  const b = app({url: 'https://meetup.example/?meetup=legacy'}); await b.ready();
+  assert.equal(b.requests[0].url, '/meetups/legacy');
 });
 
-test('failed saves leave search enabled for retry', async () => {
-  const a = app({saveError: true});
-  await a.ready();
-  await a.search('coffee');
+test('explicit join shares a name and snapshot, renders places and directions', async () => {
+  const a = app(); await a.ready(); a.elements['guest-name'].value = 'Sam'; await a.join();
+  const body = JSON.parse(a.requests.find(r => r.method === 'POST').body);
+  assert.deepEqual(body, {GuestName: 'Sam', Lat: 47, Long: -122});
+  assert.equal(a.elements['guests'].children[0].textContent, 'Sam (you)');
+  assert.equal(a.elements['leave-button'].hidden, false);
+  a.searches[0].resolve(result('Coffee')); await tick();
+  assert.equal(a.elements['places'].children.length, 1);
+  const directions = a.elements['places'].children[0].children[1];
+  assert.match(directions.href, /destination_place_id=place-id/);
+  assert.equal(directions.target, '_blank');
+});
+
+test('polling picks up friends and shared searches without reposting location', async () => {
+  const a = app(); await a.ready(); await a.join();
+  a.backend.guests.push({GuestId: 'friend', GuestName: '<script>friend</script>', Lat: 48, Long: -123});
+  a.backend.query = 'tacos'; await a.refresh();
+  assert.equal(a.elements['guest-count'].textContent, '2');
+  assert.equal(a.elements['guests'].children[1].textContent, '<script>friend</script>');
+  assert.equal(a.searches.at(-1).request.textQuery, 'tacos');
+  assert.equal(a.requests.filter(r => r.method === 'POST').length, 1);
+});
+
+test('polls pause while hidden, and unchanged state avoids repeated place searches', async () => {
+  const a = app(); await a.ready(); await a.join();
+  const count = a.requests.length; a.context.document.hidden = true; await a.refresh();
+  assert.equal(a.requests.length, count);
+  a.context.document.hidden = false; await a.refresh(); assert.equal(a.searches.length, 1);
+});
+
+test('editing a search survives a background refresh', async () => {
+  const a = app(); await a.ready();
+  a.context.document.activeElement = a.elements['search-query'];
+  a.elements['search-query'].value = 'typing'; a.backend.query = 'coffee'; await a.refresh();
+  assert.equal(a.elements['search-query'].value, 'typing');
+  assert.equal(a.context.appState.query, 'coffee');
+});
+
+test('search saves in place and ignores older place responses', async () => {
+  const a = app({url: 'https://meetup.example/?m=friends&query=old'}); await a.ready(); await a.join();
+  const searching = a.search(' coffee '); await tick();
+  assert.equal(a.searches[1].request.textQuery, 'coffee');
+  a.searches[1].resolve(result('Coffee')); await searching;
+  a.searches[0].resolve(result('Stale food')); await tick();
+  assert.equal(a.elements['places'].children[0].children[0].children[0].textContent, 'Coffee');
+  assert.equal(a.context.window.location.href, 'https://meetup.example/?m=friends');
+});
+
+test('manual pin selection joins without geolocation', async () => {
+  const a = app({locationError: true}); await a.ready(); await a.join();
+  assert.match(a.elements['location-status'].textContent, /choose a spot/i);
+  a.elements['pin-button'].click();
+  a.context.appState.map.click({latLng: {lat: () => 12, lng: () => 34}}); await tick();
+  assert.equal(a.backend.guests[0].Lat, 12);
+  assert.equal(a.context.appState.choosingPin, false);
+});
+
+test('leaving removes own snapshot without affecting friends', async () => {
+  const a = app(); await a.ready(); await a.join();
+  a.backend.guests.push({GuestId: 'friend', Lat: 48, Long: -123}); await a.refresh();
+  await a.elements['leave-button'].click();
+  assert.equal(a.backend.guests.length, 1);
+  assert.equal(a.elements['leave-button'].hidden, true);
+  assert.match(a.elements['location-status'].textContent, /removed/);
+});
+
+test('expired links clear locations and disable sharing and edits', async () => {
+  const a = app(); await a.ready(); await a.join(); a.backend.expired = true; await a.refresh();
+  assert.equal(a.context.appState.expired, true);
+  assert.equal(a.elements['guests'].children.length, 0);
+  assert.equal(a.elements['share-button'].disabled, true);
+  assert.equal(a.elements['location-button'].disabled, true);
+  assert.match(a.elements['meetup-status'].textContent, /expired/);
+  const count = a.requests.length; await a.refresh(); assert.equal(a.requests.length, count);
+  a.searches[0].resolve(result('Late coffee')); await tick(); assert.equal(a.elements['places'].children.length, 0);
+});
+
+test('failed requests keep retry available', async () => {
+  const a = app({saveError: true}); await a.ready(); await a.search('coffee');
   assert.match(a.elements['search-status'].textContent, /Could not save/);
   assert.equal(a.elements['search-button'].disabled, false);
-  assert.equal(a.searches.length, 1);
+  a.context.mapLoadFailed(); assert.match(a.elements['search-status'].textContent, /map could not load/);
 });
 
-test('location and map failures are visible and sharing remains available', async () => {
-  const a = app({locationError: true});
-  await a.ready();
-  assert.match(a.elements['search-status'].textContent, /Permission denied/);
-  await a.search('coffee');
-  assert.match(a.elements['search-status'].textContent, /Permission denied/);
-  a.context.mapLoadFailed();
-  assert.match(a.elements['search-status'].textContent, /map could not load/);
-  await a.share();
-  assert.equal(a.elements['share-link'].hidden, false);
-});
-
-test('share uses native sharing when available', async () => {
-  let shared;
-  const a = app({navigator: {share: async data => { shared = data; }}});
-  await a.share();
+test('native share, clipboard fallback, and selectable link remain supported', async () => {
+  let shared, copied;
+  const a = app({navigator: {share: async data => {shared = data;}}}); await a.share();
   assert.equal(shared.url, a.context.window.location.href);
-  assert.equal(a.elements['share-status'].textContent, 'Link shared!');
+  const b = app({navigator: {share: async () => {throw new Error('Unavailable');}, clipboard: {writeText: async url => {copied = url;}}}}); await b.share();
+  assert.equal(copied, b.context.window.location.href);
+  const c = app(); await c.share(); assert.equal(c.elements['share-link'].selected, true);
+  const d = app({navigator: {share: async () => {throw {name: 'AbortError'};}}}); await d.share();
+  assert.equal(d.elements['share-status'].textContent, 'Sharing canceled.'); assert.equal(d.elements['share-link'].hidden, true);
 });
 
-test('share falls back to the clipboard after native sharing fails', async () => {
-  let copied;
-  const a = app({navigator: {
-    share: async () => { throw new Error('Unavailable'); },
-    clipboard: {writeText: async url => { copied = url; }}
-  }});
-  await a.share();
-  assert.equal(copied, a.context.window.location.href);
-  assert.equal(a.elements['share-status'].textContent, 'Link copied!');
+
+test('an open page expires locally without waiting for another successful poll', async () => {
+ const a=app();await a.ready();await a.join();
+ assert.ok(a.timers.at(-1).ms>0);
+ a.timers.at(-1).fn();
+ assert.equal(a.context.appState.expired,true);
+ assert.equal(a.elements['places'].children.length,0);
+ assert.equal(a.elements['location-button'].disabled,true);
 });
 
-test('share shows a selected link when clipboard access is unavailable', async () => {
-  const a = app();
-  await a.share();
-  const link = a.elements['share-link'];
-  assert.equal(link.hidden, false);
-  assert.equal(link.value, a.context.window.location.href);
-  assert.equal(link.selected, true);
-  assert.equal(link.focused, true);
-});
-
-test('canceling native sharing reports cancellation without copying', async () => {
-  const a = app({navigator: {share: async () => { throw {name: 'AbortError'}; }}});
-  await a.share();
-  assert.equal(a.elements['share-status'].textContent, 'Sharing canceled.');
-  assert.equal(a.elements['share-link'].hidden, true);
+test('a delayed poll cannot replace a newly shared snapshot',async()=>{
+ let hold=false,release;
+ const a=app({beforeJSON:async(url,init)=>{
+  if(hold && !init.method && url.startsWith('/meetups/')) await new Promise(resolve=>{release=resolve;});
+ }});
+ await a.ready();hold=true;
+ const poll=a.refresh();await tick();
+ await a.join();
+ assert.equal(a.context.appState.guests.length,1);
+ hold=false;release();await poll;
+ assert.equal(a.context.appState.guests.length,1);
 });

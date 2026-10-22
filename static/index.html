@@ -1,64 +1,47 @@
 <!DOCTYPE html>
-<html>
-  <head>
-    <title>Lets meet up</title>
-    <meta name="viewport" content="initial-scale=1.0">
-    <meta charset="utf-8">
-    <style>
-      /* Always set the map height explicitly to define the size of the div
-       * element that contains the map. */
-      #map {
-        flex: 1;
-        min-height: 0;
-      }
-      /* Optional: Makes the sample page fill the window. */
-      html, body {
-        height: 100%;
-        margin: 0;
-        padding: 0;
-      }
-      body {
-        display: flex;
-        flex-direction: column;
-        font-family: sans-serif;
-      }
-      footer {
-        padding: 12px 16px;
-        padding-bottom: max(12px, env(safe-area-inset-bottom));
-        background: white;
-        box-shadow: 0 -2px 8px #0002;
-      }
-      #search-form, .share-controls {
-        display: flex;
-        align-items: center;
-        flex-wrap: wrap;
-        gap: 8px;
-      }
-      #search-form { margin-bottom: 12px; }
-      input, button { font: inherit; padding: 10px 12px; }
-      input { flex: 1; min-width: 120px; }
-      button { cursor: pointer; }
-      #share-status { font-size: 0.875rem; }
-    </style>
-  </head>
-  <body>
-    <div id="map"></div>
-    <footer>
-      <form id="search-form">
-        <label for="search-query">Search nearby</label>
-        <input id="search-query" name="query" type="search" placeholder="food" maxlength="200" required>
-        <button id="search-button" type="submit" disabled>Search</button>
-        <span id="search-status" role="status"></span>
-      </form>
-      <div class="share-controls">
-        <span>send this to your friend</span>
-        <button id="share-button" type="button">Share</button>
-        <span id="share-status" role="status"></span>
-        <input id="share-link" type="text" aria-label="Meetup link to copy" readonly hidden>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f7f8f5">
+  <title>Let’s meet up</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header>
+    <a class="brand" href="/">Let’s meet up<span class="brand-dot">.</span></a>
+    <button id="share-button" class="primary" type="button">Share meetup ↗</button>
+  </header>
+  <main>
+    <section id="map" aria-label="Map of friends and suggested places"></section>
+    <section class="panel" aria-label="Meetup details">
+      <div class="intro"><div><span class="eyebrow">GOOD COMPANY. EASY PLANS.</span><h1>Find a place between you.</h1></div><a href="/" class="new-meetup">New meetup ↗</a></div>
+      <p class="muted" id="meetup-status" role="status">Loading your meetup…</p>
+      <div id="share-status" role="status"></div>
+      <input id="share-link" type="text" aria-label="Meetup link to copy" readonly hidden>
+      <div class="join-card">
+        <label for="guest-name">Your name <span class="muted">(optional)</span></label>
+        <input id="guest-name" maxlength="60" autocomplete="given-name" placeholder="What should friends call you?">
+        <div class="actions">
+          <button id="location-button" class="primary" type="button">Use my location</button>
+          <button id="pin-button" type="button" aria-pressed="false">Choose on map</button>
+          <button id="leave-button" type="button" hidden>Leave meetup</button>
+        </div>
+        <p id="location-status" class="muted" role="status">Share a snapshot of your location, then send this link to a friend.</p>
+        <p class="privacy">Anyone with the link can see shared locations. Locations stay fixed until you update them. This meetup lasts 24 hours.</p>
       </div>
-    </footer>
-    <script src="/main.js?v=2"></script>
-    <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDOFv6dJjvOaRnP8d3Vf9t9802bSEYGs7U&callback=initMap&libraries=places"
-    async defer onerror="mapLoadFailed()"></script>
-  </body>
+      <div class="section-heading"><h2>Who’s here</h2><span id="guest-count" class="badge">0</span></div>
+      <ul id="guests" class="guest-list"><li class="muted">Be the first to join.</li></ul>
+      <form id="search-form">
+        <label for="search-query">Find somewhere to meet</label>
+        <div class="search-row"><input id="search-query" name="query" type="search" placeholder="Coffee, tacos, a park…" maxlength="200" required><button id="search-button" type="submit" disabled>Find places</button></div>
+      </form>
+      <p id="search-status" class="muted" role="status">Add a location to find places near the middle.</p>
+      <ol id="places" class="places"></ol>
+      <p class="footnote" id="expiry">No accounts. Just a link and a plan.</p>
+    </section>
+  </main>
+  <script src="/main.js?v=3"></script>
+  <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDOFv6dJjvOaRnP8d3Vf9t9802bSEYGs7U&amp;loading=async&amp;callback=initMap" async onerror="mapLoadFailed()"></script>
+</body>
 </html>
