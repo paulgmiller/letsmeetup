@@ -22,6 +22,7 @@ function expireMeetup() {
   $('guests').replaceChildren(); $('places').replaceChildren(); $('guest-count').textContent = '0';
   $('meetup-status').textContent = 'This meetup has expired. Start a new meetup to make a fresh plan.';
   $('location-status').textContent = 'Location sharing has ended.';
+  if (!$('map-loading').hidden) { $('map-loading-title').textContent = 'This meetup has expired.'; $('map-loading-detail').textContent = 'Start a new meetup to make a fresh plan.'; }
   $('search-status').textContent = '';
   ['location-button', 'pin-button', 'search-button', 'search-query', 'guest-name', 'share-button', 'leave-button'].forEach(id => { $(id).disabled = true; });
 }
@@ -85,6 +86,9 @@ function renderGuests() {
 function mapLoadFailed() {
   if (appState.expired) return;
   appState.mapError = true;
+  $('map-loading').hidden = false;
+  $('map-loading-title').textContent = 'The map could not load.';
+  $('map-loading-detail').textContent = 'Reload to try again. You can still share this meetup.';
   $('search-status').textContent = 'The map could not load. Reload to try again. You can still share this meetup.';
   $('pin-button').disabled = true;
 }
@@ -108,7 +112,21 @@ async function initMap() {
   } catch (error) { mapLoadFailed(); }
 }
 
+function revealMap() {
+  if (!appState.map || appState.mapError || appState.expired) return;
+  $('map').style.visibility = 'visible';
+  $('map-loading').hidden = true;
+}
+
+function centerOnLocation(lat, lng) {
+  if (!appState.map || appState.expired) return;
+  appState.map.setCenter({lat, lng});
+  appState.map.setZoom(14);
+  revealMap();
+}
+
 function renderGuestMarkers() {
+  if (appState.guests.length) revealMap();
   appState.markers.forEach(marker => { marker.map = null; });
   appState.markers = appState.guests.map((guest, index) => {
     var label = guest.GuestId === appState.ownID ? 'You' : String(index + 1);
@@ -241,20 +259,39 @@ async function saveLocation(lat, lng) {
   } finally { appState.revision++; setBusy(false); }
 }
 
-function locateAndShare(automatic = false) {
-  if (!navigator.geolocation) { $('location-status').textContent = 'Location is unavailable. Choose a spot on the map instead.'; return; }
+function lookupLocation() {
+  if (!navigator.geolocation) return Promise.resolve({error: {code: 2}});
+  return new Promise(resolve => {
+    navigator.geolocation.getCurrentPosition(position => resolve({position}), error => resolve({error}),
+      {timeout: 15000, maximumAge: 60000});
+  });
+}
+
+function locationFailure(error) {
+  if (error.code === 1) return 'Location access is blocked. Allow it in your browser’s site settings, or choose a spot on the map.';
+  if (error.code === 3) return 'Your browser could not return a location in time. Try again, or choose a spot on the map.';
+  return 'Your browser could not determine your location. Try again, or choose a spot on the map.';
+}
+
+async function locateAndShare(automatic = false) {
   var revision = appState.revision;
-  var canceled = () => appState.expired || (automatic && (appState.revision !== revision || appState.choosingPin || appState.busy));
   if (!automatic) setBusy(true);
-  $('location-status').textContent = 'Waiting for location permission…';
-  navigator.geolocation.getCurrentPosition(position => {
-    if (canceled()) return;
-    saveLocation(position.coords.latitude, position.coords.longitude);
-  }, () => {
-    if (canceled()) return;
+  $('location-status').textContent = 'Finding your location…';
+  var result = await (automatic ? startupLocation : lookupLocation());
+  if (appState.expired || (automatic && (appState.revision !== revision || appState.choosingPin || appState.busy))) return;
+  if (result && result.position) {
+    // Show the actual location immediately, even while the server save is pending.
+    centerOnLocation(result.position.coords.latitude, result.position.coords.longitude);
+    await saveLocation(result.position.coords.latitude, result.position.coords.longitude);
+  } else {
     if (!automatic) setBusy(false);
-    $('location-status').textContent = 'Could not get your location. Allow access and try again, or choose a spot on the map.';
-  }, {timeout: 15000, maximumAge: 60000});
+    var message = locationFailure(result && result.error || {});
+    $('location-status').textContent = message;
+    if (!$('map-loading').hidden) {
+      $('map-loading-title').textContent = 'Location unavailable';
+      $('map-loading-detail').textContent = message;
+    }
+  }
 }
 
 $('location-button').addEventListener('click', () => locateAndShare());
@@ -265,7 +302,7 @@ $('pin-button').addEventListener('click', () => {
   appState.choosingPin = !appState.choosingPin;
   $('pin-button').setAttribute('aria-pressed', String(appState.choosingPin));
   $('location-status').textContent = appState.choosingPin ? 'Tap a spot on the map to share that location. Tap “Choose on map” again to cancel.' : 'Pin selection canceled.';
-  if (appState.choosingPin) $('map').scrollIntoView({block: 'center'});
+  if (appState.choosingPin) { revealMap(); $('map').scrollIntoView({block: 'center'}); }
 });
 
 $('guest-name').addEventListener('change', () => {
@@ -312,5 +349,7 @@ $('share-button').addEventListener('click', async () => {
 });
 
 var initialMeetup = refreshMeetup();
+// Start acquisition while the Google Maps script loads, then reuse that result.
+var startupLocation = initialMeetup.then(() => appState.expired ? null : lookupLocation());
 setInterval(refreshMeetup, 12000);
 document.addEventListener('visibilitychange', () => { if (!document.hidden) refreshMeetup(); });

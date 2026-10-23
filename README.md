@@ -41,7 +41,9 @@ search API on the next page load. See Google’s
 - Opening a link requests your location and automatically joins with a snapshot
   once the browser allows access, including when permission was previously granted.
   An existing participant’s name is preserved. Denying access leaves the map and
-  manual pin selection available.
+  manual pin selection available. A locating placeholder stays visible until a
+  location is available; the map centers before the location is saved. Permission
+  denial, unavailable location, and timeout have separate messages.
 - “Use my location” shares one snapshot. “Choose on map” lets you pan, zoom, and
   tap a location instead. The optional name can be edited after joining.
 - Visible pages refresh participants and the shared search every 12 seconds,

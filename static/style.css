@@ -6,7 +6,10 @@ a { color: #23604c; text-underline-offset: 3px; }
 .brand { font-size: 23px; font-weight: 750; letter-spacing: -1px; text-decoration: none; color: inherit; }
 .brand-dot { color: #db7a4b; }
 main { display: grid; grid-template-columns: 1fr 440px; height: calc(100dvh - 76px); }
-#map { min-height: 300px; background: #e5ebe5; }
+.map-area { position: relative; min-width: 0; min-height: 300px; background: #e5ebe5; }
+#map { height: 100%; min-height: 300px; visibility: hidden; }
+#map-loading { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; padding: 32px; text-align: center; }
+#map-loading p { max-width: 320px; color: #586d62; }
 .panel { overflow-y: auto; padding: 32px 28px 20px; }
 .intro { display: flex; gap: 10px; align-items: flex-start; }
 .eyebrow { font-size: 10px; font-weight: 750; letter-spacing: 1.8px; color: #60766c; }
@@ -51,7 +54,8 @@ button[aria-pressed="true"] { background: #f9ead7; border-color: #b47937; }
  .brand { font-size: 21px; }
  header button { padding: 9px 12px; font-size: 13px; }
  main { display: flex; flex-direction: column; height: auto; }
- #map { height: 42dvh; min-height: 250px; position: sticky; top: 0; }
+ .map-area { height: 42dvh; min-height: 250px; position: sticky; top: 0; }
+ #map { min-height: 250px; }
  .panel { padding: 24px 20px max(24px, env(safe-area-inset-bottom)); background: #f7f8f5; z-index: 1; border-radius: 22px 22px 0 0; margin-top: -18px; overflow: visible; }
  h1 { font-size: 27px; }
 }

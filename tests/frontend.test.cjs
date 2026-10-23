@@ -5,7 +5,7 @@ const vm = require('node:vm');
 const {webcrypto} = require('node:crypto');
 
 class Element {
-  constructor() { this.value = ''; this.textContent = ''; this.children = []; this.hidden = false; }
+  constructor() { this.value = ''; this.textContent = ''; this.children = []; this.hidden = false; this.style = {}; }
   addEventListener(event, handler) { this[event] = handler; }
   setAttribute(name, value) { this[name] = value; }
   append(...children) { this.children.push(...children); }
@@ -29,7 +29,7 @@ function app(options = {}) {
       locations.push({success,failure});
       if (options.locate) return options.locate(success, failure);
       if (locations.length === 1 && !options.autoJoin) return;
-      options.locationError ? failure({message: 'Permission denied'}) : success({coords: {latitude: 47, longitude: -122}});
+      options.locationError ? failure({code: options.locationCode || 1, message: 'Permission denied'}) : success({coords: {latitude: 47, longitude: -122}});
     }}, ...options.navigator},
     setInterval(fn, delay) { intervals.push({fn, delay}); },
     fetch: async (url, init = {}) => {
@@ -286,4 +286,41 @@ test('opening an expired meetup never shares the granted location',async()=>{
  assert.equal(a.context.appState.expired,true);
  assert.equal(a.locations.length,0);
  assert.equal(a.requests.filter(r=>r.method==='POST').length,0);
+});
+
+
+test('a slow browser location keeps the placeholder visible instead of a default map',async()=>{
+ let locate;
+ const a=app({locate:success=>{locate=success;}});await a.ready();
+ assert.equal(a.elements['map-loading'].hidden,false);
+ assert.notEqual(a.elements.map.style.visibility,'visible');
+ assert.equal(a.elements['location-status'].textContent,'Finding your location…');
+ locate({coords:{latitude:47,longitude:-122}});await tick();
+ assert.equal(a.elements['map-loading'].hidden,true);
+ assert.equal(a.elements.map.style.visibility,'visible');
+ assert.equal(a.context.appState.map.center.lat,47);
+});
+
+test('the map centers before the server finishes saving the location',async()=>{
+ let release;
+ const a=app({autoJoin:true,beforeFetch:async(_url,init)=>{
+  if(init.method==='POST') await new Promise(resolve=>{release=resolve;});
+ }});await a.ready();
+ assert.equal(a.context.appState.guests.length,0);
+ assert.equal(a.context.appState.map.center.lat,47);
+ assert.equal(a.context.appState.map.zoom,14);
+ assert.equal(a.elements.map.style.visibility,'visible');
+ release();await tick();assert.equal(a.context.appState.markers.length,1);
+});
+
+test('location denial and timeout explain the cause and keep manual selection usable',async()=>{
+ for(const [code,message] of [[1,/blocked/],[2,/determine/],[3,/in time/]]) {
+  const a=app({autoJoin:true,locationError:true,locationCode:code});await a.ready();
+  assert.match(a.elements['location-status'].textContent,message);
+  assert.equal(a.elements['map-loading'].hidden,false);
+  assert.equal(a.requests.filter(r=>r.method==='POST').length,0);
+  a.elements['pin-button'].click();
+  assert.equal(a.elements['map-loading'].hidden,true);
+  assert.equal(a.elements.map.style.visibility,'visible');
+ }
 });

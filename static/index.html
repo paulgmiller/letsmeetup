@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f7f8f5">
   <title>Let’s meet up</title>
-  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/style.css?v=2">
 </head>
 <body>
   <header>
@@ -13,7 +13,13 @@
     <button id="share-button" class="primary" type="button">Share meetup ↗</button>
   </header>
   <main>
-    <section id="map" aria-label="Map of friends and suggested places"></section>
+    <section class="map-area" aria-label="Map of friends and suggested places">
+      <div id="map"></div>
+      <div id="map-loading" role="status">
+        <strong id="map-loading-title">Finding your location…</strong>
+        <p id="map-loading-detail">Your map will open here when your browser returns a location. You can also choose a spot on the map.</p>
+      </div>
+    </section>
     <section class="panel" aria-label="Meetup details">
       <div class="intro"><div><span class="eyebrow">GOOD COMPANY. EASY PLANS.</span><h1>Find a place between you.</h1></div><a href="/" class="new-meetup">New meetup ↗</a></div>
       <p class="muted" id="meetup-status" role="status">Loading your meetup…</p>
@@ -41,7 +47,7 @@
       <p class="footnote" id="expiry">No accounts. Just a link and a plan.</p>
     </section>
   </main>
-  <script src="/main.js?v=5"></script>
+  <script src="/main.js?v=6"></script>
   <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyDOFv6dJjvOaRnP8d3Vf9t9802bSEYGs7U&amp;loading=async&amp;callback=initMap" async onerror="mapLoadFailed()"></script>
 </body>
 </html>
